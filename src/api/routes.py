@@ -233,37 +233,6 @@ async def list_operations():
     )
 
 
-@router.get("/operations/{operation_id}")
-async def get_operation(operation_id: str):
-    """Get a single operation with full detail."""
-    orch = get_orchestrator()
-    op = orch.tracker.get(operation_id)
-    if not op:
-        raise HTTPException(status_code=404, detail=f"Operation {operation_id} not found")
-
-    return {
-        "id": op.id,
-        "type": op.operation_type,
-        "seller": op.seller_name,
-        "seller_url": op.seller_url,
-        "status": op.status.value,
-        "buyer_ref": op.buyer_ref,
-        "media_buy_id": op.media_buy_id,
-        "task_id": op.task_id,
-        "context_id": op.context_id,
-        "error": op.error,
-        "poll_count": op.poll_count,
-        "request_data": op.request_data,
-        "response_data": op.response_data,
-        "application_context": op.application_context,
-        "webhook_config": op.webhook_config,
-        "input_required_message": op.input_required_message,
-        "input_required_data": op.input_required_data,
-        "created_at": op.created_at.isoformat(),
-        "updated_at": op.updated_at.isoformat(),
-    }
-
-
 @router.post("/operations/poll")
 async def poll_pending():
     """Poll all pending operations for status updates using tasks/get."""
@@ -390,6 +359,40 @@ async def activate_signal(req: SignalActivateRequest):
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# --- Health ---
+
+
+@router.get("/operations/{operation_id}")
+async def get_operation(operation_id: str):
+    """Get a single operation with full detail."""
+    orch = get_orchestrator()
+    op = orch.tracker.get(operation_id)
+    if not op:
+        raise HTTPException(status_code=404, detail=f"Operation {operation_id} not found")
+
+    return {
+        "id": op.id,
+        "type": op.operation_type,
+        "seller": op.seller_name,
+        "seller_url": op.seller_url,
+        "status": op.status.value,
+        "buyer_ref": op.buyer_ref,
+        "media_buy_id": op.media_buy_id,
+        "task_id": op.task_id,
+        "context_id": op.context_id,
+        "error": op.error,
+        "poll_count": op.poll_count,
+        "request_data": op.request_data,
+        "response_data": op.response_data,
+        "application_context": op.application_context,
+        "webhook_config": op.webhook_config,
+        "input_required_message": op.input_required_message,
+        "input_required_data": op.input_required_data,
+        "created_at": op.created_at.isoformat(),
+        "updated_at": op.updated_at.isoformat(),
+    }
 
 
 # --- Health ---
