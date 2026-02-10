@@ -26,6 +26,24 @@ class TaskStatus(str, Enum):
     FAILED = "failed"
     CANCELED = "canceled"
     AUTH_REQUIRED = "auth-required"
+    REJECTED = "rejected"  # Seller rejected the request
+    UNKNOWN = "unknown"  # Unrecognized status from seller
+
+
+# Polling intervals per status (seconds). None = don't poll.
+POLLING_INTERVALS: dict[TaskStatus, int | None] = {
+    TaskStatus.WORKING: 5,
+    TaskStatus.SUBMITTED: 60,
+    TaskStatus.INPUT_REQUIRED: None,  # Wait for human input, don't poll
+}
+
+# Terminal statuses — no further polling needed
+TERMINAL_STATUSES = frozenset({
+    TaskStatus.COMPLETED,
+    TaskStatus.FAILED,
+    TaskStatus.CANCELED,
+    TaskStatus.REJECTED,
+})
 
 
 @dataclass
@@ -47,6 +65,11 @@ class TrackedOperation:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     poll_count: int = 0
+    # Phase 2 fields
+    application_context: dict = field(default_factory=dict)  # Opaque context echoed by sellers
+    webhook_config: dict | None = None  # pushNotificationConfig used for this op
+    input_required_message: str | None = None  # Human-readable message for HITL
+    input_required_data: dict | None = None  # Structured input requirements
 
 
 class OperationTracker:
@@ -175,6 +198,18 @@ class OperationTracker:
             op.context_id = response["context_id"]
         if "media_buy_id" in response:
             op.media_buy_id = response["media_buy_id"]
+
+        # Extract HITL data when input is required
+        if op.status == TaskStatus.INPUT_REQUIRED:
+            op.input_required_message = response.get("message", "")
+            op.input_required_data = {
+                k: v for k, v in response.items()
+                if k not in ("status", "message", "context_id", "task_id")
+            }
+
+        # Preserve application context if echoed back
+        if "context" in response and isinstance(response["context"], dict):
+            op.application_context = response["context"]
 
         logger.info(f"Operation {op_id} -> {op.status.value}")
         return op
