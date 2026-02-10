@@ -40,6 +40,7 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
       Resource = [
         aws_secretsmanager_secret.database_url.arn,
         aws_secretsmanager_secret.webhook_secret.arn,
+        aws_secretsmanager_secret.seller_token_adcp_test.arn,
       ]
     }]
   })
