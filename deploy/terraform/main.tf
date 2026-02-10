@@ -66,6 +66,12 @@ resource "aws_secretsmanager_secret" "webhook_secret" {
   recovery_window_in_days = 7
 }
 
+resource "aws_secretsmanager_secret" "seller_token_adcp_test" {
+  name                    = "nxflo/buyer/seller-token-adcp-test"
+  description             = "Bearer token for the AdCP Test Agent"
+  recovery_window_in_days = 7
+}
+
 resource "aws_secretsmanager_secret" "aurora_password" {
   name                    = "nxflo/buyer/aurora-password"
   description             = "Aurora master password"
@@ -200,6 +206,10 @@ resource "aws_ecs_task_definition" "buyer" {
       {
         name      = "NXFLO_WEBHOOK_SECRET"
         valueFrom = aws_secretsmanager_secret.webhook_secret.arn
+      },
+      {
+        name      = "NXFLO_SELLER_TOKEN_ADCP_TEST"
+        valueFrom = aws_secretsmanager_secret.seller_token_adcp_test.arn
       },
     ]
 
