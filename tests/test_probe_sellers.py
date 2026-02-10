@@ -30,7 +30,7 @@ async def probe_seller(agent):
 
 async def main():
     print("=" * 70)
-    print("ADFX Buying Agent — Seller Probe")
+    print("Nexflo Buyer — Seller Probe")
     print("=" * 70)
 
     sellers = await discover_all_sellers()

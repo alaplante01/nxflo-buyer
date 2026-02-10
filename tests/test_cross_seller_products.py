@@ -37,7 +37,7 @@ async def query_products(agent):
 
 async def main():
     print("=" * 70)
-    print("ADFX Buying Agent — Cross-Seller Product Comparison")
+    print("Nexflo Buyer — Cross-Seller Product Comparison")
     print("=" * 70)
     print(f"\nBrief: {BRIEF}")
     print(f"Brand: {BRAND} ({BRAND_URL})\n")
