@@ -1,4 +1,4 @@
-"""ADFX Buying Agent — FastAPI entry point.
+"""Nexflo Buyer — FastAPI entry point.
 
 Discovers AdCP seller agents and buys inventory on behalf of advertisers.
 
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize the orchestrator on startup, discover sellers."""
-    logger.info("ADFX Buying Agent starting...")
+    logger.info("Nexflo Buyer starting...")
 
     # Create and initialize orchestrator
     orch = BuyingOrchestrator()
@@ -49,11 +49,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    logger.info("ADFX Buying Agent shutting down")
+    logger.info("Nexflo Buyer shutting down")
 
 
 app = FastAPI(
-    title="ADFX Buying Agent",
+    title="Nexflo Buyer",
     description="AdCP buying agent that discovers seller agents and purchases inventory",
     version="0.1.0",
     lifespan=lifespan,

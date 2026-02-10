@@ -2,14 +2,14 @@
 
 ## Project Overview
 
-ADFX Buying Agent — An AdCP buyer that discovers seller agents on the AdCP registry and purchases advertising inventory on behalf of advertisers. This is the **demand side** of the AdCP (Ad Context Protocol) ecosystem.
+Nexflo Buyer — An AdCP buying agent that discovers seller agents on the AdCP registry and purchases advertising inventory on behalf of advertisers. This is the **demand side** of the AdCP (Ad Context Protocol) ecosystem.
 
 ## Architecture
 
 ```
 Advertiser/AI Client
        |
-  ADFX Buying Agent (this repo)
+  Nexflo Buyer (this repo)
        |
        +-- calls seller agents via MCP (Model Context Protocol)
        +-- discovers sellers from AdCP registry
@@ -58,10 +58,10 @@ python -m venv .venv
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| ADFX_HOST | 0.0.0.0 | Server bind host |
-| ADFX_PORT | 8000 | Server bind port |
-| ADFX_DATABASE_URL | sqlite+aiosqlite:///adfx_buyer.db | Database connection |
-| ADFX_REGISTRY_URL | https://adcontextprotocol.org/api/registry | AdCP registry |
+| NXFLO_HOST | 0.0.0.0 | Server bind host |
+| NXFLO_PORT | 8000 | Server bind port |
+| NXFLO_DATABASE_URL | sqlite+aiosqlite:///nxflo.db | Database connection |
+| NXFLO_REGISTRY_URL | https://adcontextprotocol.org/api/registry | AdCP registry |
 
 ## Key Patterns
 

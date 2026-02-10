@@ -5,15 +5,15 @@ import os
 import sys
 
 # Use a test database
-os.environ["ADFX_DATABASE_URL"] = "sqlite+aiosqlite:///test_adfx.db"
+os.environ["NXFLO_DATABASE_URL"] = "sqlite+aiosqlite:///test_nxflo.db"
 
 from src.buying.tracker import OperationTracker, TaskStatus
 
 
 async def main():
     # Clean up any existing test db
-    if os.path.exists("test_adfx.db"):
-        os.remove("test_adfx.db")
+    if os.path.exists("test_nxflo.db"):
+        os.remove("test_nxflo.db")
 
     print("=== Test SQLite Persistence ===\n")
 
@@ -73,7 +73,7 @@ async def main():
     # Clean up (dispose engine to release SQLite file lock)
     from src.models.schema import engine
     await engine.dispose()
-    os.remove("test_adfx.db")
+    os.remove("test_nxflo.db")
     print("\nAll persistence tests PASSED")
 
 

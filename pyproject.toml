@@ -1,7 +1,7 @@
 [project]
-name = "adfx-buyer"
+name = "nxflo-buyer"
 version = "0.1.0"
-description = "ADFX Buying Agent — AdCP buyer that discovers and purchases inventory from seller agents"
+description = "Nexflo Buyer — AdCP buying agent that discovers and purchases ad inventory from seller agents"
 requires-python = ">=3.11"
 dependencies = [
     "fastmcp>=2.14.0",

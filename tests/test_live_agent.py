@@ -70,7 +70,7 @@ async def test_list_creative_formats():
 async def main():
     """Run all tests manually (no pytest needed)."""
     print("=" * 60)
-    print("ADFX Buying Agent - Live Integration Test")
+    print("Nexflo Buyer - Live Integration Test")
     print("=" * 60)
 
     tests = [

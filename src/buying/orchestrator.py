@@ -177,7 +177,7 @@ class BuyingOrchestrator:
 
         Returns a BuyResult with the operation status and IDs.
         """
-        ref = buyer_ref or f"adfx-{uuid.uuid4().hex[:12]}"
+        ref = buyer_ref or f"nxflo-{uuid.uuid4().hex[:12]}"
         brand_manifest = {"name": settings.brand_name, "url": settings.brand_url}
 
         # Track the operation

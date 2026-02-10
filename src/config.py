@@ -1,4 +1,4 @@
-"""Configuration for the ADFX Buying Agent."""
+"""Configuration for the Nexflo buying agent."""
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -15,7 +15,7 @@ class SellerConfig:
 
 
 # Pre-configured sellers (add more as you get auth tokens)
-# Tokens can also be set via env: ADFX_SELLER_TOKEN_<slug>=<token>
+# Tokens can also be set via env: NXFLO_SELLER_TOKEN_<slug>=<token>
 DEFAULT_SELLERS = [
     SellerConfig(
         name="AdCP Test Agent",
@@ -37,14 +37,14 @@ DEFAULT_SELLERS = [
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    model_config = {"env_prefix": "ADFX_"}
+    model_config = {"env_prefix": "NXFLO_"}
 
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
 
     # Database (SQLite for MVP, PostgreSQL later)
-    database_url: str = Field(default="sqlite+aiosqlite:///adfx_buyer.db")
+    database_url: str = Field(default="sqlite+aiosqlite:///nxflo.db")
 
     # AdCP Registry
     registry_url: str = "https://adcontextprotocol.org/api/registry"
@@ -53,9 +53,9 @@ class Settings(BaseSettings):
     mcp_timeout: int = 30
     mcp_max_retries: int = 3
 
-    # Brand manifest (default for ADFX)
-    brand_name: str = "ADFX"
-    brand_url: str = "https://adfx.io"
+    # Brand manifest
+    brand_name: str = "Nexflo"
+    brand_url: str = "https://nexflo.io"
 
 
 settings = Settings()
