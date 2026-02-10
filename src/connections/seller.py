@@ -122,19 +122,37 @@ async def create_media_buy_on_seller(
     budget: float,
     buyer_ref: str,
     brand_manifest: dict[str, Any],
-    start_time: dict[str, Any] | None = None,
+    pricing_option_id: str = "cpm-standard",
+    start_time: str = "asap",
     end_time: str | None = None,
     push_notification_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create a media buy on a seller agent."""
+    """Create a media buy on a seller agent.
+
+    Matches the AdCP create_media_buy schema:
+    - packages[].budget is a flat number (not {amount, currency})
+    - packages[].buyer_ref and pricing_option_id are required per package
+    - start_time is a string: "asap" or ISO 8601 datetime
+    - end_time is a required ISO 8601 datetime string
+    """
+    from datetime import UTC, datetime, timedelta
+
+    # Default end_time to 30 days from now if not specified
+    if not end_time:
+        end_time = (datetime.now(UTC) + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     params: dict[str, Any] = {
-        "packages": [{"product_id": product_id, "budget": {"amount": budget, "currency": "USD"}}],
+        "packages": [{
+            "product_id": product_id,
+            "budget": budget,
+            "buyer_ref": buyer_ref,
+            "pricing_option_id": pricing_option_id,
+        }],
         "buyer_ref": buyer_ref,
         "brand_manifest": brand_manifest,
-        "start_time": start_time or {"type": "asap"},
+        "start_time": start_time,
+        "end_time": end_time,
     }
-    if end_time:
-        params["end_time"] = end_time
     if push_notification_config:
         params["push_notification_config"] = push_notification_config
 

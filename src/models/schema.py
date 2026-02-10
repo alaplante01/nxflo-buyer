@@ -91,7 +91,19 @@ class WebhookEventRecord(Base):
 
 
 # Engine and session factory
-engine = create_async_engine(settings.database_url, echo=False)
+_is_sqlite = settings.database_url.startswith("sqlite")
+_engine_kwargs: dict = {"echo": False}
+if not _is_sqlite:
+    _engine_kwargs.update({
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_timeout": 30,
+        "pool_recycle": 1800,
+        "pool_pre_ping": True,
+        "connect_args": {"ssl": "require"},
+    })
+
+engine = create_async_engine(settings.database_url, **_engine_kwargs)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
