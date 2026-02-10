@@ -15,12 +15,22 @@ class SellerConfig:
 
 
 # Pre-configured sellers (add more as you get auth tokens)
+# Tokens can also be set via env: ADFX_SELLER_TOKEN_<slug>=<token>
 DEFAULT_SELLERS = [
     SellerConfig(
         name="AdCP Test Agent",
         url="https://test-agent.adcontextprotocol.org/mcp",
         token="1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ",
     ),
+    # Live sellers from AdCP registry (auth tokens TBD)
+    SellerConfig(name="Adzymic SPH", url="https://sph.sales-agent.adzymic.ai/mcp"),
+    SellerConfig(name="Adzymic MediaCorp", url="https://mediacorp.sales-agent.adzymic.ai/mcp"),
+    SellerConfig(name="Adzymic APX", url="https://apx.sales-agent.adzymic.ai/mcp"),
+    SellerConfig(name="Adzymic TSL", url="https://tsl.sales-agent.adzymic.ai/mcp"),
+    SellerConfig(name="Bidcliq", url="https://agents.bidcliq.com/mcp"),
+    SellerConfig(name="Content Ignite", url="https://sales-agent.contentignite.com/mcp"),
+    SellerConfig(name="Advertible", url="https://adcp.4dvertible.com/mcp"),
+    SellerConfig(name="Swivel", url="https://adcp-mcp-server-286099387629.us-central1.run.app/mcp"),
 ]
 
 

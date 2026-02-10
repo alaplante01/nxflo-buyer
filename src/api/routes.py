@@ -68,9 +68,12 @@ class OperationsResponse(BaseModel):
 
 @router.get("/discover", response_model=DiscoverResponse)
 async def discover_sellers():
-    """Discover all available seller agents from registry + config."""
+    """Discover all available seller agents from registry + config.
+
+    Probes each seller to discover tools and classify by type.
+    """
     orch = get_orchestrator()
-    sellers = await orch.discover_sellers(force=True)
+    sellers = await orch.discover_sellers(probe=True)
     return DiscoverResponse(
         sellers=[
             {
@@ -80,6 +83,8 @@ async def discover_sellers():
                 "status": s.status,
                 "source": s.source,
                 "has_auth": s.token is not None,
+                "tools": s.tools,
+                "can_sell": s.can_sell,
             }
             for s in sellers
         ],
