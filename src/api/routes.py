@@ -67,6 +67,7 @@ class BuyRequest(BaseModel):
     targeting: dict | None = Field(default=None, description="Targeting overlay (geo, device, frequency)")
     pacing: str | None = Field(default=None, description="Pacing: even, asap, or front_loaded")
     proposal_id: str | None = Field(default=None, description="Proposal ID from get_products (skips package building)")
+    currency: str = Field(default="USD", description="Currency code (ISO 4217)")
 
 
 class BuyResponse(BaseModel):
@@ -178,6 +179,7 @@ async def search_products(req: ProductSearchRequest):
                 "pricing_option_id": p.pricing_option_id,
                 "channels": p.channels,
                 "formats": p.formats,
+                "format_ids": p.format_ids,
             }
             for i, p in enumerate(ranked)
         ],
@@ -226,6 +228,7 @@ async def buy_inventory(req: BuyRequest):
         targeting=req.targeting,
         pacing=req.pacing,
         proposal_id=req.proposal_id,
+        currency=req.currency,
     )
 
     return BuyResponse(
@@ -257,6 +260,7 @@ async def list_operations():
                 "media_buy_id": op.media_buy_id,
                 "task_id": op.task_id,
                 "error": op.error,
+                "creative_deadline": op.creative_deadline,
                 "created_at": op.created_at.isoformat(),
                 "updated_at": op.updated_at.isoformat(),
             }
@@ -448,6 +452,7 @@ async def get_operation(operation_id: str):
         "webhook_config": _redact_webhook_config(op.webhook_config),
         "input_required_message": op.input_required_message,
         "input_required_data": op.input_required_data,
+        "creative_deadline": op.creative_deadline,
         "created_at": op.created_at.isoformat(),
         "updated_at": op.updated_at.isoformat(),
     }

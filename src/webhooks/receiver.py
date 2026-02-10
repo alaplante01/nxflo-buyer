@@ -89,8 +89,15 @@ async def _verify_auth(request: Request, body: bytes, operation_id: str):
             secret = stored_cred
 
     if scheme == "HMAC-SHA256":
-        signature = request.headers.get("x-webhook-signature", "")
-        timestamp = request.headers.get("x-webhook-timestamp", "")
+        # AdCP spec headers (preferred), fall back to legacy x-webhook-* headers
+        signature = (
+            request.headers.get("x-adcp-signature")
+            or request.headers.get("x-webhook-signature", "")
+        )
+        timestamp = (
+            request.headers.get("x-adcp-timestamp")
+            or request.headers.get("x-webhook-timestamp", "")
+        )
         if not signature or not timestamp:
             raise HTTPException(status_code=401, detail="Missing HMAC signature headers")
         if not verify_hmac_signature(body, signature, timestamp, secret):

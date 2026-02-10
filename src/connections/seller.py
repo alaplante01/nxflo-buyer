@@ -153,6 +153,7 @@ async def create_media_buy_on_seller(
     buyer_ref: str,
     brand_manifest: dict[str, Any],
     pricing_option_id: str = "cpm-standard",
+    format_ids: list[dict] | None = None,
     start_time: str = "asap",
     end_time: str | None = None,
     push_notification_config: dict[str, Any] | None = None,
@@ -161,7 +162,7 @@ async def create_media_buy_on_seller(
 
     Matches the AdCP create_media_buy schema:
     - packages[].budget is a flat number (not {amount, currency})
-    - packages[].buyer_ref and pricing_option_id are required per package
+    - packages[].buyer_ref, pricing_option_id, and format_ids are required per package
     - start_time is a string: "asap" or ISO 8601 datetime
     - end_time is a required ISO 8601 datetime string
     """
@@ -171,13 +172,17 @@ async def create_media_buy_on_seller(
     if not end_time:
         end_time = (datetime.now(UTC) + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    pkg: dict[str, Any] = {
+        "product_id": product_id,
+        "budget": budget,
+        "buyer_ref": buyer_ref,
+        "pricing_option_id": pricing_option_id,
+    }
+    if format_ids:
+        pkg["format_ids"] = format_ids
+
     params: dict[str, Any] = {
-        "packages": [{
-            "product_id": product_id,
-            "budget": budget,
-            "buyer_ref": buyer_ref,
-            "pricing_option_id": pricing_option_id,
-        }],
+        "packages": [pkg],
         "buyer_ref": buyer_ref,
         "brand_manifest": brand_manifest,
         "start_time": start_time,

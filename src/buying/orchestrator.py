@@ -35,6 +35,7 @@ class SellerProduct:
     price_cpm: float | None = None
     channels: list[str] = field(default_factory=list)
     formats: list[str] = field(default_factory=list)
+    format_ids: list[dict] = field(default_factory=list)  # AdCP FormatID objects: [{agent_url, id}]
     pricing_option_id: str | None = None
     raw: dict = field(default_factory=dict)
 
@@ -169,6 +170,19 @@ class BuyingOrchestrator:
             if not pricing_option_id and p.get("pricing_options"):
                 pricing_option_id = p["pricing_options"][0].get("pricing_option_id")
 
+            # Extract format_ids (AdCP spec: list of {agent_url, id} objects)
+            raw_format_ids = p.get("format_ids", [])
+            if not raw_format_ids:
+                # Fallback: reconstruct from legacy formats array
+                for f in p.get("formats", []):
+                    if isinstance(f, dict):
+                        fid = f.get("format_id") or f.get("id", "")
+                        if fid:
+                            raw_format_ids.append({
+                                "agent_url": f.get("agent_url", seller.url),
+                                "id": fid,
+                            })
+
             products.append(
                 SellerProduct(
                     seller=seller,
@@ -178,7 +192,8 @@ class BuyingOrchestrator:
                     price_cpm=price_cpm,
                     pricing_option_id=pricing_option_id,
                     channels=p.get("channels", []),
-                    formats=[f.get("format_id", "") for f in p.get("formats", [])],
+                    formats=[f.get("format_id", "") for f in p.get("formats", []) if isinstance(f, dict)],
+                    format_ids=raw_format_ids,
                     raw=p,
                 )
             )
@@ -210,6 +225,7 @@ class BuyingOrchestrator:
         targeting: dict | None = None,
         pacing: str | None = None,
         proposal_id: str | None = None,
+        currency: str = "USD",
     ) -> BuyResult:
         """Execute a media buy on a specific product.
 
@@ -261,7 +277,7 @@ class BuyingOrchestrator:
         if proposal_id:
             # Proposal workflow: seller already has the media plan
             params["proposal_id"] = proposal_id
-            params["total_budget"] = budget
+            params["total_budget"] = {"amount": budget, "currency": currency}
         elif packages:
             # Multi-package: caller provides full package list
             for pkg in packages:
@@ -275,6 +291,8 @@ class BuyingOrchestrator:
                 "buyer_ref": ref,
                 "pricing_option_id": product.pricing_option_id or "cpm-standard",
             }
+            if product.format_ids:
+                pkg["format_ids"] = product.format_ids
             if targeting:
                 pkg["targeting_overlay"] = targeting
             if pacing:
@@ -283,6 +301,11 @@ class BuyingOrchestrator:
 
         if push_config:
             params["push_notification_config"] = push_config
+
+        # Attach reporting webhook for automated delivery data
+        if settings.webhook_base_url:
+            from src.webhooks.config import build_reporting_webhook
+            params["reporting_webhook"] = build_reporting_webhook(operation_id=op.id)
 
         try:
             session = self.get_seller_session(product.seller)

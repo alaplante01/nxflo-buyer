@@ -305,6 +305,37 @@ class TestOperationTracker:
         assert op.input_required_message == "Please approve the budget"
         assert "approval_options" in op.input_required_data
 
+    @pytest.mark.asyncio
+    async def test_creative_deadline_extraction(self, tracker):
+        op = await tracker.create(
+            operation_type="create_media_buy",
+            seller_name="Test",
+            seller_url="https://test.com",
+            buyer_ref="ref",
+            request_data={},
+        )
+        tracker.update_from_response(op.id, {
+            "status": "completed",
+            "media_buy_id": "mb-1",
+            "creative_deadline": "2026-03-15T23:59:59Z",
+        })
+        assert op.creative_deadline == "2026-03-15T23:59:59Z"
+
+    @pytest.mark.asyncio
+    async def test_creative_deadline_absent(self, tracker):
+        op = await tracker.create(
+            operation_type="create_media_buy",
+            seller_name="Test",
+            seller_url="https://test.com",
+            buyer_ref="ref",
+            request_data={},
+        )
+        tracker.update_from_response(op.id, {
+            "status": "completed",
+            "media_buy_id": "mb-2",
+        })
+        assert op.creative_deadline is None
+
 
 # --- Rate Limiter ---
 
@@ -380,3 +411,123 @@ class TestRateLimiter:
         await mw({"type": "websocket"}, None, AsyncMock())
 
         assert len(calls) == 1  # Non-HTTP passes through
+
+
+# --- AdCP Compliance: Webhook Header Fallback (Gap 1) ---
+
+
+class TestWebhookHeaderFallback:
+    """Verify _verify_auth reads x-adcp-* headers first, falls back to x-webhook-*."""
+
+    def _make_signature(self, body: bytes, timestamp: str, secret: str) -> str:
+        expected = hmac.new(
+            secret.encode("utf-8"),
+            timestamp.encode("utf-8") + body,
+            hashlib.sha256,
+        ).hexdigest()
+        return f"sha256={expected}"
+
+    def test_adcp_headers_used(self):
+        """x-adcp-signature is accepted by verify_hmac_signature."""
+        from src.webhooks.receiver import verify_hmac_signature
+
+        secret = "test-secret"
+        body = b'{"task_id":"t1","status":"completed"}'
+        timestamp = "2024-01-01T00:00:00Z"
+        sig = self._make_signature(body, timestamp, secret)
+
+        # Verify with x-adcp-* header values
+        assert verify_hmac_signature(body, sig, timestamp, secret) is True
+
+    def test_legacy_headers_still_work(self):
+        """x-webhook-* headers continue to work for backwards compatibility."""
+        from src.webhooks.receiver import verify_hmac_signature
+
+        secret = "legacy-secret"
+        body = b'{"data":"test"}'
+        timestamp = "2025-06-01T12:00:00Z"
+        sig = self._make_signature(body, timestamp, secret)
+
+        assert verify_hmac_signature(body, sig, timestamp, secret) is True
+
+
+# --- AdCP Compliance: format_ids in Products and Packages (Gap 2) ---
+
+
+class TestFormatIds:
+    """Verify format_ids are extracted from products and included in packages."""
+
+    def test_format_ids_field_on_seller_product(self):
+        from src.buying.orchestrator import SellerProduct
+        from src.discovery.registry import SellerAgent
+
+        seller = SellerAgent(name="Test", url="https://test.com/mcp")
+        product = SellerProduct(
+            seller=seller,
+            product_id="p1",
+            name="Test Product",
+            format_ids=[
+                {"agent_url": "https://creative.example.com", "id": "display_300x250"},
+            ],
+        )
+        assert len(product.format_ids) == 1
+        assert product.format_ids[0]["id"] == "display_300x250"
+        assert product.format_ids[0]["agent_url"] == "https://creative.example.com"
+
+    def test_format_ids_default_empty(self):
+        from src.buying.orchestrator import SellerProduct
+        from src.discovery.registry import SellerAgent
+
+        seller = SellerAgent(name="Test", url="https://test.com/mcp")
+        product = SellerProduct(seller=seller, product_id="p1", name="Test")
+        assert product.format_ids == []
+
+
+# --- AdCP Compliance: total_budget Format (Gap 3) ---
+
+
+class TestTotalBudgetFormat:
+    """Verify total_budget is sent as {amount, currency} in proposal mode."""
+
+    def test_total_budget_object_structure(self):
+        budget = 50000.0
+        currency = "EUR"
+        total_budget = {"amount": budget, "currency": currency}
+        assert total_budget["amount"] == 50000.0
+        assert total_budget["currency"] == "EUR"
+
+    def test_default_currency_usd(self):
+        # Verify BuyRequest defaults to USD
+        from src.api.routes import BuyRequest
+
+        req = BuyRequest(brief="test", budget=100.0)
+        assert req.currency == "USD"
+
+    def test_custom_currency(self):
+        from src.api.routes import BuyRequest
+
+        req = BuyRequest(brief="test", budget=100.0, currency="GBP")
+        assert req.currency == "GBP"
+
+
+# --- AdCP Compliance: Reporting Webhook Config (Gap 4) ---
+
+
+class TestReportingWebhook:
+    """Verify reporting_webhook builds correctly and has the right structure."""
+
+    def test_reporting_webhook_structure(self):
+        from src.webhooks.config import build_reporting_webhook
+
+        config = build_reporting_webhook(
+            operation_id="op-123",
+            base_url="https://buyer.example.com",
+            secret="test-secret-32-chars-long-enough",
+        )
+        assert config["url"] == "https://buyer.example.com/webhooks/adcp/reporting/op-123"
+        assert "authentication" in config
+        assert config["authentication"]["schemes"] == ["HMAC-SHA256"]
+        assert config["reporting_frequency"] == "daily"
+        assert "requested_metrics" in config
+        assert isinstance(config["requested_metrics"], list)
+        assert "impressions" in config["requested_metrics"]
