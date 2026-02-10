@@ -9,11 +9,14 @@ Reference: https://docs.adcontextprotocol.org/docs/building/integration/mcp-guid
 
 import hashlib
 import hmac
+import json
 import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+
+from src.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +63,73 @@ def verify_bearer_auth(auth_header: str, expected_token: str) -> bool:
     return hmac.compare_digest(auth_header[7:], expected_token)
 
 
+async def _verify_auth(request: Request, body: bytes, operation_id: str):
+    """Verify webhook authentication using the scheme configured for this operation.
+
+    Checks the operation's stored webhook_config to determine which auth scheme
+    was negotiated, then verifies accordingly.
+    Skips verification if no webhook secret is configured.
+    """
+    secret = settings.webhook_secret
+    if not secret:
+        return  # No secret configured — skip auth (dev mode)
+
+    tracker = _get_tracker()
+    op = tracker.get(operation_id)
+
+    # Determine scheme from stored webhook config, fall back to global setting
+    scheme = settings.webhook_auth_scheme
+    if op and op.webhook_config:
+        auth_cfg = op.webhook_config.get("authentication", {})
+        schemes = auth_cfg.get("schemes", [])
+        if schemes:
+            scheme = schemes[0]
+        stored_cred = auth_cfg.get("credentials")
+        if stored_cred:
+            secret = stored_cred
+
+    if scheme == "HMAC-SHA256":
+        signature = request.headers.get("x-webhook-signature", "")
+        timestamp = request.headers.get("x-webhook-timestamp", "")
+        if not signature or not timestamp:
+            raise HTTPException(status_code=401, detail="Missing HMAC signature headers")
+        if not verify_hmac_signature(body, signature, timestamp, secret):
+            raise HTTPException(status_code=401, detail="Invalid HMAC signature")
+    elif scheme.lower() == "bearer":
+        auth_header = request.headers.get("authorization", "")
+        if not verify_bearer_auth(auth_header, secret):
+            raise HTTPException(status_code=401, detail="Invalid Bearer token")
+    else:
+        logger.warning(f"Unknown webhook auth scheme: {scheme}")
+
+
+async def _check_idempotency(event_id: str, task_id: str, operation_id: str, status: str, timestamp: str) -> bool:
+    """Check if this webhook event was already processed. Records it if new."""
+    from src.models.schema import async_session, WebhookEventRecord
+
+    ts = datetime.now(UTC)
+    try:
+        ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        pass
+
+    async with async_session() as session:
+        existing = await session.get(WebhookEventRecord, event_id)
+        if existing:
+            logger.info(f"Duplicate webhook event {event_id}, skipping")
+            return True
+
+        session.add(WebhookEventRecord(
+            event_id=event_id,
+            task_id=task_id,
+            operation_id=operation_id,
+            status=status,
+            timestamp=ts,
+        ))
+        await session.commit()
+        return False
+
+
 class WebhookPayload(BaseModel):
     task_id: str
     status: str
@@ -84,21 +154,25 @@ async def receive_webhook(
 
     Steps:
     1. Verify authentication (HMAC-SHA256 or Bearer)
-    2. Check for replay attacks (timestamp within 5 minutes)
-    3. Parse payload
-    4. Update operation tracker
-    5. Return 200
+    2. Parse payload
+    3. Check for replay attacks (timestamp within 5 minutes)
+    4. Deduplicate via idempotency check
+    5. Update operation tracker
+    6. Return 200
     """
     tracker = _get_tracker()
     body = await request.body()
 
-    # Parse payload
+    # 1. Verify authentication
+    await _verify_auth(request, body, operation_id)
+
+    # 2. Parse payload
     try:
         payload = WebhookPayload.model_validate_json(body)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
 
-    # Check timestamp freshness (replay protection)
+    # 3. Check timestamp freshness (replay protection)
     try:
         ts = datetime.fromisoformat(payload.timestamp.replace("Z", "+00:00"))
         if abs((datetime.now(UTC) - ts).total_seconds()) > 300:
@@ -106,7 +180,19 @@ async def receive_webhook(
     except (ValueError, TypeError):
         pass  # Non-ISO timestamps are accepted but not replay-protected
 
-    # Find and update the operation
+    # 4. Idempotency check
+    event_id = f"{payload.task_id}:{payload.status}:{payload.timestamp}"
+    is_duplicate = await _check_idempotency(
+        event_id=event_id,
+        task_id=payload.task_id,
+        operation_id=operation_id,
+        status=payload.status,
+        timestamp=payload.timestamp,
+    )
+    if is_duplicate:
+        return {"status": "already_processed"}
+
+    # 5. Find and update the operation
     op = tracker.get(operation_id)
     if op:
         response_data = {"status": payload.status}
@@ -141,15 +227,16 @@ async def receive_reporting_webhook(
     tracker = _get_tracker()
     body = await request.body()
 
+    # Verify authentication
+    await _verify_auth(request, body, operation_id)
+
     try:
-        import json
         payload = json.loads(body)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
 
     op = tracker.get(operation_id)
     if op:
-        # Store reporting data in response_data
         existing = op.response_data or {}
         reports = existing.get("reporting_webhooks", [])
         reports.append({

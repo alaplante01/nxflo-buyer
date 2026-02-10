@@ -5,29 +5,23 @@ Workflow: discover sellers -> get products -> rank -> create media buy -> monito
 This is the brain of the buying agent. It coordinates across multiple seller
 agents to find the best inventory for an advertiser's brief.
 
-Phase 2: Adds session management, standard task polling, HITL, webhooks,
-and complete MCP tool support per the AdCP MCP Guide.
+All seller interactions route through SellerSession for automatic context_id
+management across multi-turn conversations.
 """
 
 import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from src.config import settings
 from src.connections.seller import (
-    call_seller_tool,
-    create_media_buy_on_seller,
     get_delivery,
     get_seller_products,
     tasks_get,
     tasks_list,
-    update_media_buy as _update_media_buy,
-    sync_creatives as _sync_creatives,
-    provide_performance_feedback as _provide_feedback,
-    get_signals as _get_signals,
-    activate_signal as _activate_signal,
 )
 from src.connections.session import SellerSession
 from src.discovery.registry import SellerAgent, discover_all_sellers
@@ -47,6 +41,7 @@ class SellerProduct:
     price_cpm: float | None = None
     channels: list[str] = field(default_factory=list)
     formats: list[str] = field(default_factory=list)
+    pricing_option_id: str | None = None
     raw: dict = field(default_factory=dict)
 
 
@@ -78,6 +73,11 @@ class BuyingOrchestrator:
         if key not in self._seller_sessions:
             self._seller_sessions[key] = SellerSession(seller)
         return self._seller_sessions[key]
+
+    async def _session_call(self, seller: SellerAgent, tool: str, params: dict[str, Any], **kwargs) -> dict[str, Any]:
+        """Call a tool via the seller's session (context_id tracked automatically)."""
+        session = self.get_seller_session(seller)
+        return await session.call_with_retry(tool, params, **kwargs)
 
     async def discover_sellers(self, probe: bool = True) -> list[SellerAgent]:
         """Discover all available seller agents.
@@ -160,12 +160,17 @@ class BuyingOrchestrator:
 
         raw_products = response.get("products", [])
         for p in raw_products:
-            # Extract price from pricing_options
+            # Extract price and pricing_option_id from pricing_options
             price_cpm = None
+            pricing_option_id = None
             for pricing in p.get("pricing_options", []):
                 if pricing.get("pricing_model") == "cpm":
                     price_cpm = pricing.get("rate")
+                    pricing_option_id = pricing.get("pricing_option_id")
                     break
+            # Fall back to first pricing option if no CPM found
+            if not pricing_option_id and p.get("pricing_options"):
+                pricing_option_id = p["pricing_options"][0].get("pricing_option_id")
 
             products.append(
                 SellerProduct(
@@ -174,6 +179,7 @@ class BuyingOrchestrator:
                     name=p.get("name", "Unknown"),
                     description=p.get("description", ""),
                     price_cpm=price_cpm,
+                    pricing_option_id=pricing_option_id,
                     channels=p.get("channels", []),
                     formats=[f.get("format_id", "") for f in p.get("formats", [])],
                     raw=p,
@@ -203,14 +209,25 @@ class BuyingOrchestrator:
         budget: float,
         buyer_ref: str | None = None,
         end_time: str | None = None,
+        packages: list[dict] | None = None,
+        targeting: dict | None = None,
+        pacing: str | None = None,
+        proposal_id: str | None = None,
     ) -> BuyResult:
         """Execute a media buy on a specific product.
 
-        Returns a BuyResult with the operation status and IDs.
-        Optionally attaches pushNotificationConfig when webhook_base_url is set.
+        Supports:
+        - Single product buy (default): builds one package from the product
+        - Multi-package: pass custom packages list
+        - Proposal workflow: pass proposal_id + budget (no packages needed)
+        - Targeting overlay: geo, device, frequency caps per the AdCP spec
+        - Pacing control: even (default), asap, front_loaded
         """
         ref = buyer_ref or f"nxflo-{uuid.uuid4().hex[:12]}"
         brand_manifest = {"name": settings.brand_name, "url": settings.brand_url}
+
+        if not end_time:
+            end_time = (datetime.now(UTC) + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         # Track the operation
         op = self.tracker.create(
@@ -222,6 +239,7 @@ class BuyingOrchestrator:
                 "product_id": product.product_id,
                 "budget": budget,
                 "brand_manifest": brand_manifest,
+                "proposal_id": proposal_id,
             },
         )
 
@@ -235,16 +253,43 @@ class BuyingOrchestrator:
             )
             op.webhook_config = push_config
 
+        # Build params
+        params: dict[str, Any] = {
+            "buyer_ref": ref,
+            "brand_manifest": brand_manifest,
+            "start_time": "asap",
+            "end_time": end_time,
+        }
+
+        if proposal_id:
+            # Proposal workflow: seller already has the media plan
+            params["proposal_id"] = proposal_id
+            params["total_budget"] = budget
+        elif packages:
+            # Multi-package: caller provides full package list
+            for pkg in packages:
+                pkg.setdefault("buyer_ref", ref)
+            params["packages"] = packages
+        else:
+            # Single product: build one package
+            pkg: dict[str, Any] = {
+                "product_id": product.product_id,
+                "budget": budget,
+                "buyer_ref": ref,
+                "pricing_option_id": product.pricing_option_id or "cpm-standard",
+            }
+            if targeting:
+                pkg["targeting_overlay"] = targeting
+            if pacing:
+                pkg["pacing"] = pacing
+            params["packages"] = [pkg]
+
+        if push_config:
+            params["push_notification_config"] = push_config
+
         try:
-            response = await create_media_buy_on_seller(
-                agent=product.seller,
-                product_id=product.product_id,
-                budget=budget,
-                buyer_ref=ref,
-                brand_manifest=brand_manifest,
-                end_time=end_time,
-                push_notification_config=push_config,
-            )
+            session = self.get_seller_session(product.seller)
+            response = await session.call_with_retry("create_media_buy", params)
 
             op = self.tracker.update_from_response(op.id, response)
             await self.tracker._persist(op)
@@ -275,16 +320,38 @@ class BuyingOrchestrator:
         buyer_ref: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Update an existing media buy."""
+        """Update an existing media buy. Tracked as an operation."""
         seller = self._find_seller_by_url(seller_url)
         if not seller:
             raise ValueError(f"Seller not found: {seller_url}")
-        return await _update_media_buy(
-            seller,
-            media_buy_id=media_buy_id,
-            buyer_ref=buyer_ref,
-            **kwargs,
+
+        # Track as operation
+        op = self.tracker.create(
+            operation_type="update_media_buy",
+            seller_name=seller.name,
+            seller_url=seller.url,
+            buyer_ref=buyer_ref or "",
+            request_data={"media_buy_id": media_buy_id, **kwargs},
         )
+
+        params: dict[str, Any] = {}
+        if media_buy_id:
+            params["media_buy_id"] = media_buy_id
+        if buyer_ref:
+            params["buyer_ref"] = buyer_ref
+        for key in ("paused", "end_time", "packages"):
+            if key in kwargs and kwargs[key] is not None:
+                params[key] = kwargs[key]
+
+        try:
+            response = await self._session_call(seller, "update_media_buy", params)
+            self.tracker.update_from_response(op.id, response)
+            await self.tracker._persist(op)
+            return response
+        except Exception as e:
+            self.tracker.mark_failed(op.id, str(e))
+            await self.tracker._persist(op)
+            raise
 
     async def sync_creatives_op(
         self,
@@ -292,11 +359,47 @@ class BuyingOrchestrator:
         creatives: list[dict],
         media_buy_id: str | None = None,
     ) -> dict[str, Any]:
-        """Upload/sync creatives for a media buy."""
+        """Upload/sync creatives for a media buy. Tracked as an operation."""
         seller = self._find_seller_by_url(seller_url)
         if not seller:
             raise ValueError(f"Seller not found: {seller_url}")
-        return await _sync_creatives(seller, creatives=creatives, media_buy_id=media_buy_id)
+
+        op = self.tracker.create(
+            operation_type="sync_creatives",
+            seller_name=seller.name,
+            seller_url=seller.url,
+            buyer_ref="",
+            request_data={"media_buy_id": media_buy_id, "creative_count": len(creatives)},
+        )
+
+        params: dict[str, Any] = {"creatives": creatives}
+        if media_buy_id:
+            params["media_buy_id"] = media_buy_id
+
+        try:
+            response = await self._session_call(seller, "sync_creatives", params)
+            self.tracker.update_from_response(op.id, response)
+            await self.tracker._persist(op)
+            return response
+        except Exception as e:
+            self.tracker.mark_failed(op.id, str(e))
+            await self.tracker._persist(op)
+            raise
+
+    async def list_creatives_op(
+        self,
+        seller_url: str,
+        filters: dict | None = None,
+    ) -> dict[str, Any]:
+        """List creatives from a seller's creative library."""
+        seller = self._find_seller_by_url(seller_url)
+        if not seller:
+            raise ValueError(f"Seller not found: {seller_url}")
+
+        params: dict[str, Any] = {}
+        if filters:
+            params["filters"] = filters
+        return await self._session_call(seller, "list_creatives", params)
 
     async def provide_feedback_op(
         self,
@@ -309,12 +412,11 @@ class BuyingOrchestrator:
         seller = self._find_seller_by_url(seller_url)
         if not seller:
             raise ValueError(f"Seller not found: {seller_url}")
-        return await _provide_feedback(
-            seller,
-            media_buy_id=media_buy_id,
-            performance_index=performance_index,
-            measurement_period=measurement_period,
-        )
+        return await self._session_call(seller, "provide_performance_feedback", {
+            "media_buy_id": media_buy_id,
+            "performance_index": performance_index,
+            "measurement_period": measurement_period,
+        })
 
     # --- Signals ---
 
@@ -325,7 +427,10 @@ class BuyingOrchestrator:
         seller = self._find_seller_by_url(seller_url)
         if not seller:
             raise ValueError(f"Seller not found: {seller_url}")
-        return await _get_signals(seller, brief=brief, platforms=platforms)
+        params: dict[str, Any] = {"signal_spec": brief}
+        if platforms:
+            params["platforms"] = platforms
+        return await self._session_call(seller, "get_signals", params)
 
     async def activate_signal_op(
         self, seller_url: str, signal_id: str, platform: dict[str, Any]
@@ -334,7 +439,10 @@ class BuyingOrchestrator:
         seller = self._find_seller_by_url(seller_url)
         if not seller:
             raise ValueError(f"Seller not found: {seller_url}")
-        return await _activate_signal(seller, signal_id=signal_id, platform=platform)
+        return await self._session_call(seller, "activate_signal", {
+            "signal_id": signal_id,
+            "platform": platform,
+        })
 
     # --- Delivery & Monitoring ---
 
@@ -430,7 +538,7 @@ class BuyingOrchestrator:
     async def provide_input(self, operation_id: str, input_data: str | dict) -> dict[str, Any]:
         """Provide human input for an input-required operation.
 
-        Uses the stored context_id to resume the conversation with the seller.
+        Uses the seller session to maintain context_id across the conversation.
         """
         op = self.tracker.get(operation_id)
         if not op:
@@ -454,7 +562,7 @@ class BuyingOrchestrator:
             params.update(input_data)
 
         try:
-            response = await call_seller_tool(seller, op.operation_type, params)
+            response = await self._session_call(seller, op.operation_type, params)
             self.tracker.update_from_response(op.id, response)
             await self.tracker._persist(op)
             return response
