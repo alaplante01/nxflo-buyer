@@ -17,12 +17,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from src.config import settings
-from src.connections.seller import (
-    get_delivery,
-    get_seller_products,
-    tasks_get,
-    tasks_list,
-)
 from src.connections.session import SellerSession
 from src.discovery.registry import SellerAgent, discover_all_sellers
 from src.buying.tracker import OperationTracker, TaskStatus
@@ -146,7 +140,10 @@ class BuyingOrchestrator:
     ) -> list[SellerProduct]:
         """Get products from a single seller and normalize."""
         try:
-            response = await get_seller_products(seller, brief, brand_name, brand_url)
+            response = await self._session_call(seller, "get_products", {
+                "brief": brief,
+                "brand_manifest": {"name": brand_name, "url": brand_url},
+            })
         except Exception as e:
             logger.warning(f"Error from {seller.name}: {e}")
             return []
@@ -229,8 +226,8 @@ class BuyingOrchestrator:
         if not end_time:
             end_time = (datetime.now(UTC) + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        # Track the operation
-        op = self.tracker.create(
+        # Track the operation (persisted immediately for crash recovery)
+        op = await self.tracker.create(
             operation_type="create_media_buy",
             seller_name=product.seller.name,
             seller_url=product.seller.url,
@@ -325,8 +322,8 @@ class BuyingOrchestrator:
         if not seller:
             raise ValueError(f"Seller not found: {seller_url}")
 
-        # Track as operation
-        op = self.tracker.create(
+        # Track as operation (persisted immediately)
+        op = await self.tracker.create(
             operation_type="update_media_buy",
             seller_name=seller.name,
             seller_url=seller.url,
@@ -364,7 +361,7 @@ class BuyingOrchestrator:
         if not seller:
             raise ValueError(f"Seller not found: {seller_url}")
 
-        op = self.tracker.create(
+        op = await self.tracker.create(
             operation_type="sync_creatives",
             seller_name=seller.name,
             seller_url=seller.url,
@@ -450,7 +447,9 @@ class BuyingOrchestrator:
         self, seller: SellerAgent, media_buy_id: str
     ) -> dict[str, Any]:
         """Check delivery metrics for a media buy."""
-        return await get_delivery(seller, media_buy_id)
+        return await self._session_call(
+            seller, "get_media_buy_delivery", {"media_buy_ids": [media_buy_id]}
+        )
 
     # --- Task Management (Standard: tasks/get, tasks/list) ---
 
@@ -468,7 +467,10 @@ class BuyingOrchestrator:
                 continue
 
             try:
-                response = await tasks_get(seller, task_id=op.task_id, include_result=True)
+                response = await self._session_call(
+                    seller, "tasks/get",
+                    {"task_id": op.task_id, "include_result": True},
+                )
                 op = self.tracker.update_from_response(op.id, response)
                 op.poll_count += 1
                 await self.tracker._persist(op)
@@ -482,10 +484,10 @@ class BuyingOrchestrator:
         self, seller: SellerAgent, statuses: list[str] | None = None
     ) -> dict[str, Any]:
         """List tasks on a specific seller using tasks/list."""
-        filters: dict[str, Any] = {}
+        params: dict[str, Any] = {}
         if statuses:
-            filters["statuses"] = statuses
-        return await tasks_list(seller, filters=filters if filters else None)
+            params["filters"] = {"statuses": statuses}
+        return await self._session_call(seller, "tasks/list", params)
 
     async def reconcile_state(self, seller: SellerAgent) -> dict[str, Any]:
         """Reconcile local operation state with server state using tasks/list.

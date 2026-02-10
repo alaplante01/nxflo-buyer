@@ -1,5 +1,7 @@
 """Configuration for the Nexflo buying agent."""
 
+import os
+
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
@@ -20,7 +22,7 @@ DEFAULT_SELLERS = [
     SellerConfig(
         name="AdCP Test Agent",
         url="https://test-agent.adcontextprotocol.org/mcp",
-        token="1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ",
+        token=os.environ.get("NXFLO_SELLER_TOKEN_ADCP_TEST"),
     ),
     # Live sellers from AdCP registry (auth tokens TBD)
     SellerConfig(name="Adzymic SPH", url="https://sph.sales-agent.adzymic.ai/mcp"),
@@ -61,6 +63,9 @@ class Settings(BaseSettings):
     webhook_base_url: str = ""  # e.g., "https://nexflo.io" — must be publicly reachable
     webhook_secret: str = ""  # HMAC shared secret (auto-generated if empty)
     webhook_auth_scheme: str = "HMAC-SHA256"  # or "bearer"
+
+    # Rate limiting
+    rate_limit_per_minute: int = 100
 
 
 settings = Settings()

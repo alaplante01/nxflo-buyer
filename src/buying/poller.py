@@ -8,6 +8,7 @@ Reference: https://docs.adcontextprotocol.org/docs/building/integration/mcp-guid
 
 import asyncio
 import logging
+from collections.abc import Callable
 
 from src.buying.tracker import (
     OperationTracker,
@@ -27,11 +28,18 @@ class BackgroundPoller:
     - WORKING: every 5 seconds (will finish soon)
     - SUBMITTED: every 60 seconds (long-running, hours/days)
     - INPUT_REQUIRED: skipped (waiting for human input)
+
+    Accepts a callable for the seller list so it always reflects the
+    latest discovery state (avoids stale references).
     """
 
-    def __init__(self, tracker: OperationTracker, sellers: list[SellerAgent]):
+    def __init__(
+        self,
+        tracker: OperationTracker,
+        get_sellers: Callable[[], list[SellerAgent]],
+    ):
         self.tracker = tracker
-        self._sellers = sellers
+        self._get_sellers = get_sellers
         self._running = False
         self._task: asyncio.Task | None = None
 
@@ -54,10 +62,6 @@ class BackgroundPoller:
                 pass
             self._task = None
         logger.info("Background poller stopped")
-
-    def update_sellers(self, sellers: list[SellerAgent]):
-        """Update the seller list (e.g., after re-discovery)."""
-        self._sellers = sellers
 
     async def _poll_loop(self):
         """Main polling loop.
@@ -118,9 +122,9 @@ class BackgroundPoller:
             logger.warning(f"Failed to poll operation {op.id}: {e}")
 
     def _find_seller(self, op: TrackedOperation) -> SellerAgent | None:
-        """Find the seller agent for an operation by URL."""
+        """Find the seller agent for an operation by URL (always uses fresh list)."""
         op_url = op.seller_url.rstrip("/")
-        for seller in self._sellers:
+        for seller in self._get_sellers():
             if seller.url.rstrip("/") == op_url:
                 return seller
         return None

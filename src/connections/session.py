@@ -7,12 +7,8 @@ per seller, injects it into requests, and extracts it from responses.
 Reference: https://docs.adcontextprotocol.org/docs/building/integration/mcp-guide
 """
 
-import json
 import logging
 from typing import Any
-
-from fastmcp.client import Client
-from fastmcp.client.transports import StreamableHttpTransport
 
 from src.discovery.registry import SellerAgent
 
@@ -96,31 +92,10 @@ class SellerSession:
             raise
 
     async def _call_raw(self, tool: str, params: dict[str, Any]) -> dict[str, Any]:
-        """Make a raw MCP tool call and parse the response."""
-        url = self.agent.url.rstrip("/")
-        headers: dict[str, str] = {}
-        if self.agent.token:
-            headers["Authorization"] = f"Bearer {self.agent.token}"
+        """Delegate to call_seller_tool for consistent circuit breaking and metrics."""
+        from src.connections.seller import call_seller_tool
 
-        transport = StreamableHttpTransport(url=url, headers=headers)
-        client = Client(transport=transport)
-
-        async with client:
-            result = await client.call_tool(tool, params)
-
-            # Parse response from CallToolResult
-            if hasattr(result, "content") and result.content:
-                for item in result.content:
-                    if hasattr(item, "text") and item.text:
-                        try:
-                            return json.loads(item.text)
-                        except json.JSONDecodeError:
-                            return {"raw": item.text}
-
-            if hasattr(result, "structured_content") and result.structured_content:
-                return result.structured_content
-
-            return {"status": "empty_response"}
+        return await call_seller_tool(self.agent, tool, params)
 
     def reset(self):
         """Reset the session — clear context_id and active tasks."""

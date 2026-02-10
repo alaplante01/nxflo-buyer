@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 
+from src.metrics import operations_created_total, operations_current
+
 logger = logging.getLogger(__name__)
 
 
@@ -169,7 +171,7 @@ class OperationTracker:
                 ))
             await session.commit()
 
-    def create(
+    async def create(
         self,
         operation_type: str,
         seller_name: str,
@@ -177,7 +179,7 @@ class OperationTracker:
         buyer_ref: str,
         request_data: dict,
     ) -> TrackedOperation:
-        """Create a new tracked operation."""
+        """Create a new tracked operation and persist immediately."""
         op = TrackedOperation(
             operation_type=operation_type,
             seller_name=seller_name,
@@ -186,12 +188,16 @@ class OperationTracker:
             request_data=request_data,
         )
         self._operations[op.id] = op
+        operations_created_total.labels(operation_type=operation_type).inc()
+        operations_current.labels(status=op.status.value).inc()
+        await self._persist(op)
         logger.info(f"Tracking operation {op.id}: {operation_type} on {seller_name}")
         return op
 
     def update_from_response(self, op_id: str, response: dict) -> TrackedOperation:
         """Update operation state from a seller response."""
         op = self._operations[op_id]
+        old_status = op.status
         op.updated_at = datetime.now(UTC)
         op.response_data = response
 
@@ -204,7 +210,8 @@ class OperationTracker:
                 op.status = TaskStatus.FAILED
                 op.error = str(response.get("error") or response.get("errors"))
             else:
-                op.status = TaskStatus.COMPLETED
+                logger.warning(f"Unrecognized status '{status_str}' for operation {op_id}")
+                op.status = TaskStatus.UNKNOWN
 
         # Extract IDs
         if "task_id" in response:
@@ -226,15 +233,24 @@ class OperationTracker:
         if "context" in response and isinstance(response["context"], dict):
             op.application_context = response["context"]
 
+        # Update Prometheus gauge on status transitions
+        if op.status != old_status:
+            operations_current.labels(status=old_status.value).dec()
+            operations_current.labels(status=op.status.value).inc()
+
         logger.info(f"Operation {op_id} -> {op.status.value}")
         return op
 
     def mark_failed(self, op_id: str, error: str) -> TrackedOperation:
         """Mark an operation as failed due to local error."""
         op = self._operations[op_id]
+        old_status = op.status
         op.status = TaskStatus.FAILED
         op.error = error
         op.updated_at = datetime.now(UTC)
+        if op.status != old_status:
+            operations_current.labels(status=old_status.value).dec()
+            operations_current.labels(status=TaskStatus.FAILED.value).inc()
         return op
 
     def get(self, op_id: str) -> TrackedOperation | None:
@@ -263,7 +279,7 @@ class OperationTracker:
 
     def get_poll_interval(self, op: TrackedOperation) -> int | None:
         """Get recommended polling interval in seconds based on status."""
-        return POLLING_INTERVALS.get(op.status, 30)
+        return POLLING_INTERVALS.get(op.status)
 
     def list_all(self) -> list[TrackedOperation]:
         return sorted(self._operations.values(), key=lambda o: o.created_at, reverse=True)

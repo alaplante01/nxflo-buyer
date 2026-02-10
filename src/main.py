@@ -12,18 +12,17 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
 
 from src.api import routes
 from src.buying.orchestrator import BuyingOrchestrator
 from src.buying.poller import BackgroundPoller
 from src.config import settings
-from src.connections.seller import tasks_get
+from src.logging_config import setup_logging
+from src.middleware import CorrelationIdMiddleware, RateLimitMiddleware
 from src.webhooks.receiver import router as webhook_router, set_tracker
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -61,21 +60,12 @@ async def lifespan(app: FastAPI):
     pending = orch.tracker.get_pending()
     if pending:
         logger.info(f"Found {len(pending)} pending operations from previous run, reconciling...")
-        for op in pending:
-            if not op.task_id:
-                continue
-            seller = orch._find_seller_by_url(op.seller_url)
-            if seller:
-                try:
-                    response = await tasks_get(seller, op.task_id, include_result=True)
-                    orch.tracker.update_from_response(op.id, response)
-                    await orch.tracker._persist(op)
-                    logger.info(f"  Reconciled {op.id} -> {op.status.value}")
-                except Exception as e:
-                    logger.warning(f"  Reconciliation failed for {op.id}: {e}")
+        results = await orch.poll_pending_operations()
+        for r in results:
+            logger.info(f"  Reconciled {r['operation_id']} -> {r['status']}")
 
-    # Start background poller
-    poller = BackgroundPoller(orch.tracker, orch.sellers)
+    # Start background poller (uses callable for fresh seller list)
+    poller = BackgroundPoller(orch.tracker, lambda: orch.sellers)
     await poller.start()
 
     yield
@@ -92,8 +82,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(RateLimitMiddleware, rate=settings.rate_limit_per_minute, window=60.0)
+app.add_middleware(CorrelationIdMiddleware)
 app.include_router(routes.router)
 app.include_router(webhook_router)
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics():
+    """Prometheus metrics endpoint."""
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
+    return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 if __name__ == "__main__":

@@ -108,6 +108,19 @@ async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def init_db():
-    """Create all tables."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """Run Alembic migrations to create/update tables.
+
+    Alembic's command.upgrade is synchronous and internally calls asyncio.run(),
+    which cannot be called from within a running event loop. We offload it to a
+    thread so it gets its own event loop.
+    """
+    import asyncio
+    from alembic import command
+    from alembic.config import Config
+
+    def _run_migrations():
+        alembic_cfg = Config("alembic.ini")
+        alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url)
+        command.upgrade(alembic_cfg, "head")
+
+    await asyncio.to_thread(_run_migrations)

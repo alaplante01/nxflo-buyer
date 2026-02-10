@@ -8,13 +8,16 @@ Adapted from the Prebid Sales Agent's mcp_client.py pattern:
 
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastmcp.client import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
+from src.connections.circuit_breaker import CircuitOpenError, circuit_breakers
 from src.discovery.registry import SellerAgent
+from src.metrics import seller_calls_total, seller_call_duration_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -63,26 +66,53 @@ async def call_seller_tool(
     """Call a tool on a seller agent and return the parsed response.
 
     This is the main interface for interacting with sellers.
-    Handles connection, tool invocation, and response parsing.
+    Handles connection, tool invocation, response parsing,
+    and circuit breaker state management.
     """
-    async with connect_to_seller(agent) as client:
-        result = await client.call_tool(tool_name, params)
+    cb = circuit_breakers.get(agent.url)
 
-        # FastMCP returns CallToolResult with content list
-        # Each content item has .text for text content
-        if hasattr(result, "content") and result.content:
-            for item in result.content:
-                if hasattr(item, "text") and item.text:
-                    try:
-                        return json.loads(item.text)
-                    except json.JSONDecodeError:
-                        return {"raw": item.text}
+    if not await cb.allow_request():
+        seller_calls_total.labels(seller=agent.name, tool=tool_name, outcome="circuit_open").inc()
+        raise CircuitOpenError(agent.name, cb.remaining_cooldown())
 
-        # Fallback: try structured_content
-        if hasattr(result, "structured_content") and result.structured_content:
-            return result.structured_content
+    start = time.perf_counter()
+    try:
+        async with connect_to_seller(agent) as client:
+            result = await client.call_tool(tool_name, params)
 
-        return {"status": "empty_response"}
+            # FastMCP returns CallToolResult with content list
+            # Each content item has .text for text content
+            if hasattr(result, "content") and result.content:
+                for item in result.content:
+                    if hasattr(item, "text") and item.text:
+                        try:
+                            parsed = json.loads(item.text)
+                        except json.JSONDecodeError:
+                            parsed = {"raw": item.text}
+                        await cb.record_success()
+                        seller_calls_total.labels(seller=agent.name, tool=tool_name, outcome="success").inc()
+                        seller_call_duration_seconds.labels(seller=agent.name, tool=tool_name).observe(time.perf_counter() - start)
+                        return parsed
+
+            # Fallback: try structured_content
+            if hasattr(result, "structured_content") and result.structured_content:
+                await cb.record_success()
+                seller_calls_total.labels(seller=agent.name, tool=tool_name, outcome="success").inc()
+                seller_call_duration_seconds.labels(seller=agent.name, tool=tool_name).observe(time.perf_counter() - start)
+                return result.structured_content
+
+            await cb.record_success()
+            seller_calls_total.labels(seller=agent.name, tool=tool_name, outcome="success").inc()
+            seller_call_duration_seconds.labels(seller=agent.name, tool=tool_name).observe(time.perf_counter() - start)
+            return {"status": "empty_response"}
+
+    except CircuitOpenError:
+        raise
+    except Exception:
+        await cb.record_failure()
+        seller_calls_total.labels(seller=agent.name, tool=tool_name, outcome="error").inc()
+        seller_call_duration_seconds.labels(seller=agent.name, tool=tool_name).observe(time.perf_counter() - start)
+        raise
 
 
 async def get_seller_capabilities(agent: SellerAgent) -> dict[str, Any]:

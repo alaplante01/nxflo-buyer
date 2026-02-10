@@ -6,14 +6,30 @@ Per the AdCP MCP Guide, URL-based routing is the recommended pattern:
 Reference: https://docs.adcontextprotocol.org/docs/building/integration/mcp-guide
 """
 
+import logging
 import secrets
 
 from src.config import settings
 
+logger = logging.getLogger(__name__)
 
-def _get_secret() -> str:
-    """Get or generate the webhook HMAC secret."""
-    return settings.webhook_secret or secrets.token_urlsafe(32)
+# Generate a stable secret once at startup if none is configured.
+# This secret is used for all webhook registrations and verifications.
+_runtime_secret: str | None = None
+
+
+def get_webhook_secret() -> str:
+    """Get the webhook HMAC secret, generating once at startup if needed."""
+    global _runtime_secret
+    if settings.webhook_secret:
+        return settings.webhook_secret
+    if _runtime_secret is None:
+        _runtime_secret = secrets.token_urlsafe(32)
+        logger.warning(
+            "No NXFLO_WEBHOOK_SECRET configured — generated ephemeral secret. "
+            "Webhooks will break across restarts. Set NXFLO_WEBHOOK_SECRET for production."
+        )
+    return _runtime_secret
 
 
 def build_push_notification_config(
@@ -34,7 +50,7 @@ def build_push_notification_config(
 
     url = url.rstrip("/")
     scheme = auth_scheme or settings.webhook_auth_scheme
-    cred = secret or _get_secret()
+    cred = secret or get_webhook_secret()
 
     return {
         "url": f"{url}/webhooks/adcp/{task_type}/{operation_id}",
@@ -64,7 +80,7 @@ def build_reporting_webhook(
 
     url = url.rstrip("/")
     scheme = auth_scheme or settings.webhook_auth_scheme
-    cred = secret or _get_secret()
+    cred = secret or get_webhook_secret()
 
     return {
         "url": f"{url}/webhooks/adcp/reporting/{operation_id}",

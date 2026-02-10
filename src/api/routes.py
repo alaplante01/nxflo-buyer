@@ -23,6 +23,17 @@ def get_orchestrator() -> BuyingOrchestrator:
     return orchestrator
 
 
+def _redact_webhook_config(config: dict | None) -> dict | None:
+    """Strip credentials from webhook config before returning to API callers."""
+    if not config:
+        return config
+    redacted = dict(config)
+    auth = redacted.get("authentication")
+    if isinstance(auth, dict) and "credentials" in auth:
+        redacted["authentication"] = {**auth, "credentials": "***REDACTED***"}
+    return redacted
+
+
 # --- Request/Response Models ---
 
 
@@ -434,7 +445,7 @@ async def get_operation(operation_id: str):
         "request_data": op.request_data,
         "response_data": op.response_data,
         "application_context": op.application_context,
-        "webhook_config": op.webhook_config,
+        "webhook_config": _redact_webhook_config(op.webhook_config),
         "input_required_message": op.input_required_message,
         "input_required_data": op.input_required_data,
         "created_at": op.created_at.isoformat(),
@@ -447,4 +458,11 @@ async def get_operation(operation_id: str):
 
 @router.get("/health")
 async def health():
-    return {"status": "ok", "service": "nxflo-buyer", "version": "0.3.0"}
+    from src.connections.circuit_breaker import circuit_breakers
+
+    return {
+        "status": "ok",
+        "service": "nxflo-buyer",
+        "version": "0.3.0",
+        "circuit_breakers": circuit_breakers.status_summary(),
+    }
