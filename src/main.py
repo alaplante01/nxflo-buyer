@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Nexflo Buyer",
     description="AdCP buying agent that discovers seller agents and purchases inventory",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 

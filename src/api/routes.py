@@ -1,7 +1,7 @@
 """FastAPI routes for the Nexflo buying agent.
 
-Phase 2: Adds endpoints for HITL, media buy updates, creatives,
-performance feedback, signals, and single operation detail.
+Exposes the full AdCP media buy lifecycle: discover, search, buy, update,
+creatives, delivery, signals, HITL, and state reconciliation.
 """
 
 from typing import Any
@@ -51,6 +51,11 @@ class BuyRequest(BaseModel):
     buyer_ref: str | None = Field(default=None, description="Idempotency key")
     end_time: str | None = Field(default=None, description="Campaign end (ISO 8601)")
     product_index: int = Field(default=0, description="Which ranked product to buy (0 = best)")
+    # Advanced options
+    packages: list[dict] | None = Field(default=None, description="Custom multi-package list (overrides product selection)")
+    targeting: dict | None = Field(default=None, description="Targeting overlay (geo, device, frequency)")
+    pacing: str | None = Field(default=None, description="Pacing: even, asap, or front_loaded")
+    proposal_id: str | None = Field(default=None, description="Proposal ID from get_products (skips package building)")
 
 
 class BuyResponse(BaseModel):
@@ -84,6 +89,11 @@ class SyncCreativesRequest(BaseModel):
     seller_url: str = Field(..., description="Seller agent URL")
     media_buy_id: str | None = Field(default=None)
     creatives: list[dict] = Field(..., description="Creative assets to sync")
+
+
+class ListCreativesRequest(BaseModel):
+    seller_url: str = Field(..., description="Seller agent URL")
+    filters: dict | None = Field(default=None, description="Optional filters (status, format_types, etc.)")
 
 
 class PerformanceFeedbackRequest(BaseModel):
@@ -149,10 +159,12 @@ async def search_products(req: ProductSearchRequest):
             {
                 "rank": i,
                 "seller": p.seller.name,
+                "seller_url": p.seller.url,
                 "product_id": p.product_id,
                 "name": p.name,
                 "description": p.description,
                 "price_cpm": p.price_cpm,
+                "pricing_option_id": p.pricing_option_id,
                 "channels": p.channels,
                 "formats": p.formats,
             }
@@ -171,6 +183,12 @@ async def buy_inventory(req: BuyRequest):
     1. Search all sellers for products matching the brief
     2. Rank by price/relevance
     3. Create a media buy on the top-ranked product (or product_index)
+
+    Advanced options:
+    - packages: provide custom multi-package list
+    - targeting: geo, device, frequency caps overlay
+    - pacing: even, asap, or front_loaded
+    - proposal_id: use a proposal from get_products (skips package building)
     """
     orch = get_orchestrator()
 
@@ -193,6 +211,10 @@ async def buy_inventory(req: BuyRequest):
         budget=req.budget,
         buyer_ref=req.buyer_ref,
         end_time=req.end_time,
+        packages=req.packages,
+        targeting=req.targeting,
+        pacing=req.pacing,
+        proposal_id=req.proposal_id,
     )
 
     return BuyResponse(
@@ -239,6 +261,18 @@ async def poll_pending():
     orch = get_orchestrator()
     results = await orch.poll_pending_operations()
     return {"polled": len(results), "results": results}
+
+
+@router.post("/operations/reconcile")
+async def reconcile_operations():
+    """Reconcile local operation state with all sellers using tasks/list.
+
+    Detects drift: operations tracked locally but gone from server,
+    and tasks on server not tracked locally.
+    """
+    orch = get_orchestrator()
+    results = await orch.reconcile_all_sellers()
+    return {"sellers": results, "count": len(results)}
 
 
 # --- Human-in-the-Loop ---
@@ -315,6 +349,19 @@ async def sync_creatives(req: SyncCreativesRequest):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.post("/media-buy/creatives/list")
+async def list_creatives(req: ListCreativesRequest):
+    """List creatives from a seller's creative library."""
+    orch = get_orchestrator()
+    try:
+        return await orch.list_creatives_op(
+            seller_url=req.seller_url,
+            filters=req.filters,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @router.post("/media-buy/feedback")
 async def provide_feedback(req: PerformanceFeedbackRequest):
     """Share performance feedback with a seller."""
@@ -361,7 +408,7 @@ async def activate_signal(req: SignalActivateRequest):
         raise HTTPException(status_code=404, detail=str(e))
 
 
-# --- Health ---
+# --- Single Operation Detail ---
 
 
 @router.get("/operations/{operation_id}")
@@ -400,4 +447,4 @@ async def get_operation(operation_id: str):
 
 @router.get("/health")
 async def health():
-    return {"status": "ok", "service": "nxflo-buyer", "version": "0.2.0"}
+    return {"status": "ok", "service": "nxflo-buyer", "version": "0.3.0"}
