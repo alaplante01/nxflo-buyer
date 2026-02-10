@@ -72,6 +72,7 @@ class TrackedOperation:
     webhook_config: dict | None = None  # pushNotificationConfig used for this op
     input_required_message: str | None = None  # Human-readable message for HITL
     input_required_data: dict | None = None  # Structured input requirements
+    creative_deadline: str | None = None  # ISO 8601 deadline for creative uploads
 
 
 class OperationTracker:
@@ -120,6 +121,7 @@ class OperationTracker:
                     webhook_config=row.webhook_config,
                     input_required_message=row.input_required_message,
                     input_required_data=row.input_required_data,
+                    creative_deadline=getattr(row, "creative_deadline", None),
                 )
                 self._operations[op.id] = op
 
@@ -147,6 +149,7 @@ class OperationTracker:
                 existing.webhook_config = op.webhook_config
                 existing.input_required_message = op.input_required_message
                 existing.input_required_data = op.input_required_data
+                existing.creative_deadline = op.creative_deadline
             else:
                 session.add(OperationRecord(
                     id=op.id,
@@ -168,6 +171,7 @@ class OperationTracker:
                     webhook_config=op.webhook_config,
                     input_required_message=op.input_required_message,
                     input_required_data=op.input_required_data,
+                    creative_deadline=op.creative_deadline,
                 ))
             await session.commit()
 
@@ -220,6 +224,8 @@ class OperationTracker:
             op.context_id = response["context_id"]
         if "media_buy_id" in response:
             op.media_buy_id = response["media_buy_id"]
+        if "creative_deadline" in response:
+            op.creative_deadline = response["creative_deadline"]
 
         # Extract HITL data when input is required
         if op.status == TaskStatus.INPUT_REQUIRED:

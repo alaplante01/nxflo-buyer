@@ -38,6 +38,7 @@ class OperationRecord(Base):
     webhook_config = Column(JSON, nullable=True)
     input_required_message = Column(Text, nullable=True)
     input_required_data = Column(JSON, nullable=True)
+    creative_deadline = Column(String, nullable=True)
 
 
 class SellerRecord(Base):
