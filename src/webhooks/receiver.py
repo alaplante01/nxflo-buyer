@@ -42,14 +42,14 @@ def verify_hmac_signature(body: bytes, signature: str, timestamp: str, secret: s
     """Verify HMAC-SHA256 signature.
 
     Expected format: sha256=<hex_digest>
-    Signed material: timestamp + body
+    Signed material: timestamp bytes + raw body bytes (no decode/re-encode round-trip)
     """
     if not signature.startswith("sha256="):
         return False
 
     expected = hmac.new(
-        secret.encode(),
-        (timestamp + body.decode()).encode(),
+        secret.encode("utf-8"),
+        timestamp.encode("utf-8") + body,
         hashlib.sha256,
     ).hexdigest()
 
@@ -68,11 +68,11 @@ async def _verify_auth(request: Request, body: bytes, operation_id: str):
 
     Checks the operation's stored webhook_config to determine which auth scheme
     was negotiated, then verifies accordingly.
-    Skips verification if no webhook secret is configured.
+    Uses the stable webhook secret from config (generated once at startup if not set).
     """
-    secret = settings.webhook_secret
-    if not secret:
-        return  # No secret configured — skip auth (dev mode)
+    from src.webhooks.config import get_webhook_secret
+
+    secret = get_webhook_secret()
 
     tracker = _get_tracker()
     op = tracker.get(operation_id)
@@ -234,6 +234,19 @@ async def receive_reporting_webhook(
         payload = json.loads(body)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+
+    # Idempotency: deduplicate by report_id or payload hash
+    report_id = payload.get("report_id") or hashlib.sha256(body).hexdigest()[:16]
+    event_id = f"report:{operation_id}:{report_id}"
+    is_duplicate = await _check_idempotency(
+        event_id=event_id,
+        task_id=operation_id,
+        operation_id=operation_id,
+        status="reporting",
+        timestamp=payload.get("timestamp", datetime.now(UTC).isoformat()),
+    )
+    if is_duplicate:
+        return {"status": "already_processed"}
 
     op = tracker.get(operation_id)
     if op:
