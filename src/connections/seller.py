@@ -6,7 +6,6 @@ Adapted from the Prebid Sales Agent's mcp_client.py pattern:
 - /mcp fallback if URL doesn't end with it
 """
 
-import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -15,7 +14,6 @@ from typing import Any
 from fastmcp.client import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
-from src.config import settings
 from src.discovery.registry import SellerAgent
 
 logger = logging.getLogger(__name__)
@@ -126,6 +124,7 @@ async def create_media_buy_on_seller(
     brand_manifest: dict[str, Any],
     start_time: dict[str, Any] | None = None,
     end_time: str | None = None,
+    push_notification_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a media buy on a seller agent."""
     params: dict[str, Any] = {
@@ -136,6 +135,8 @@ async def create_media_buy_on_seller(
     }
     if end_time:
         params["end_time"] = end_time
+    if push_notification_config:
+        params["push_notification_config"] = push_notification_config
 
     return await call_seller_tool(agent, "create_media_buy", params)
 
@@ -145,3 +146,122 @@ async def get_delivery(agent: SellerAgent, media_buy_id: str) -> dict[str, Any]:
     return await call_seller_tool(
         agent, "get_media_buy_delivery", {"media_buy_ids": [media_buy_id]}
     )
+
+
+# --- AdCP Protocol Tools (Phase 2) ---
+
+
+async def get_adcp_capabilities_tool(
+    agent: SellerAgent, protocols: list[str] | None = None
+) -> dict[str, Any]:
+    """Call get_adcp_capabilities on a seller to discover protocol support.
+
+    This is the protocol-recommended way to discover what a seller supports,
+    rather than just listing MCP tools.
+    """
+    params: dict[str, Any] = {}
+    if protocols:
+        params["protocols"] = protocols
+    return await call_seller_tool(agent, "get_adcp_capabilities", params)
+
+
+async def update_media_buy(
+    agent: SellerAgent,
+    media_buy_id: str | None = None,
+    buyer_ref: str | None = None,
+    paused: bool | None = None,
+    end_time: str | None = None,
+    packages: list[dict] | None = None,
+) -> dict[str, Any]:
+    """Update an existing media buy using PATCH semantics."""
+    params: dict[str, Any] = {}
+    if media_buy_id:
+        params["media_buy_id"] = media_buy_id
+    if buyer_ref:
+        params["buyer_ref"] = buyer_ref
+    if paused is not None:
+        params["paused"] = paused
+    if end_time:
+        params["end_time"] = end_time
+    if packages:
+        params["packages"] = packages
+    return await call_seller_tool(agent, "update_media_buy", params)
+
+
+async def sync_creatives(
+    agent: SellerAgent,
+    creatives: list[dict],
+    media_buy_id: str | None = None,
+) -> dict[str, Any]:
+    """Upload/sync creative assets for a media buy."""
+    params: dict[str, Any] = {"creatives": creatives}
+    if media_buy_id:
+        params["media_buy_id"] = media_buy_id
+    return await call_seller_tool(agent, "sync_creatives", params)
+
+
+async def provide_performance_feedback(
+    agent: SellerAgent,
+    media_buy_id: str,
+    performance_index: float,
+    measurement_period: dict[str, Any],
+) -> dict[str, Any]:
+    """Share performance outcomes with a seller."""
+    return await call_seller_tool(
+        agent,
+        "provide_performance_feedback",
+        {
+            "media_buy_id": media_buy_id,
+            "performance_index": performance_index,
+            "measurement_period": measurement_period,
+        },
+    )
+
+
+async def get_signals(
+    agent: SellerAgent,
+    brief: str,
+    platforms: list[dict] | None = None,
+) -> dict[str, Any]:
+    """Discover audience signals from a signals agent."""
+    params: dict[str, Any] = {"brief": brief}
+    if platforms:
+        params["platforms"] = platforms
+    return await call_seller_tool(agent, "get_signals", params)
+
+
+async def activate_signal(
+    agent: SellerAgent,
+    signal_id: str,
+    platform: dict[str, Any],
+) -> dict[str, Any]:
+    """Activate a signal for use in campaigns."""
+    return await call_seller_tool(
+        agent,
+        "activate_signal",
+        {"signal_id": signal_id, "platform": platform},
+    )
+
+
+async def tasks_get(
+    agent: SellerAgent,
+    task_id: str,
+    include_result: bool = True,
+) -> dict[str, Any]:
+    """Poll a specific task status using the standard tasks/get tool."""
+    return await call_seller_tool(
+        agent,
+        "tasks/get",
+        {"task_id": task_id, "include_result": include_result},
+    )
+
+
+async def tasks_list(
+    agent: SellerAgent,
+    filters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """List tasks on a seller using the standard tasks/list tool."""
+    params: dict[str, Any] = {}
+    if filters:
+        params["filters"] = filters
+    return await call_seller_tool(agent, "tasks/list", params)

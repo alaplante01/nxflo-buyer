@@ -1,11 +1,20 @@
-"""Discover seller agents from the AdCP registry and direct configuration."""
+"""Discover seller agents from the AdCP registry and direct configuration.
 
+Discovery uses multiple mechanisms (per AdCP MCP Guide):
+1. Local config (pre-configured sellers with auth tokens)
+2. AdCP registry API
+3. Server card (/.well-known/mcp.json)
+4. get_adcp_capabilities tool (protocol-recommended discovery)
+"""
+
+import asyncio
 import logging
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 import httpx
 
-from src.config import DEFAULT_SELLERS, SellerConfig, settings
+from src.config import DEFAULT_SELLERS, settings
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +36,74 @@ class SellerAgent:
     status: str = "unknown"  # online, offline, error
     source: str = "config"  # config, registry, discovery
 
+    # Capabilities from get_adcp_capabilities
+    adcp_versions: list[int] = field(default_factory=list)
+    supported_protocols: list[str] = field(default_factory=list)
+    capabilities: dict = field(default_factory=dict)
+    portfolio: dict = field(default_factory=dict)
+    extensions_supported: list[str] = field(default_factory=list)
+    server_card: dict | None = None
+
     @property
     def can_sell(self) -> bool:
-        """Whether this agent supports the media buy workflow."""
+        """Whether this agent supports the media buy workflow.
+
+        Prefers capabilities-based check, falls back to tool-based.
+        """
+        if self.supported_protocols:
+            return "media_buy" in self.supported_protocols
         return bool(SALES_TOOLS & set(self.tools))
 
     @property
-    def has_signals(self) -> bool:
+    def supports_media_buy(self) -> bool:
+        return "media_buy" in self.supported_protocols
+
+    @property
+    def supports_signals(self) -> bool:
+        if self.supported_protocols:
+            return "signals" in self.supported_protocols
         return bool(SIGNALS_TOOLS & set(self.tools))
+
+    @property
+    def supports_governance(self) -> bool:
+        return "governance" in self.supported_protocols
+
+    @property
+    def has_signals(self) -> bool:
+        return self.supports_signals
 
     @property
     def has_creatives(self) -> bool:
         return bool(CREATIVE_TOOLS & set(self.tools))
+
+
+async def fetch_server_card(base_url: str) -> dict | None:
+    """Check /.well-known/mcp.json and /.well-known/server.json on seller domain.
+
+    Returns the server card dict if found, None otherwise.
+    Extracts _meta.adcontextprotocol.org for AdCP-specific metadata.
+    """
+    parsed = urlparse(base_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        for path in ("/.well-known/mcp.json", "/.well-known/server.json"):
+            try:
+                resp = await client.get(f"{origin}{path}")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    logger.debug(f"Found server card at {origin}{path}")
+                    return data
+            except Exception:
+                continue
+
+    return None
+
+
+def _extract_adcp_meta(server_card: dict) -> dict:
+    """Extract AdCP metadata from a server card's _meta field."""
+    meta = server_card.get("_meta", {})
+    return meta.get("adcontextprotocol.org", {})
 
 
 async def fetch_registry_agents() -> list[SellerAgent]:
@@ -100,12 +165,15 @@ def get_configured_sellers() -> list[SellerAgent]:
 
 
 async def probe_seller(agent: SellerAgent) -> SellerAgent:
-    """Probe a seller to discover its tools and status.
+    """Probe a seller to discover its tools, capabilities, and status.
 
-    Connects via MCP, lists tools, and classifies the agent type.
+    Steps:
+    1. Connect via MCP and list tools
+    2. If get_adcp_capabilities is available, call it for rich discovery
+    3. Optionally fetch server card from well-known URL
+    4. Classify agent type based on capabilities or tools
     """
-    # Import here to avoid circular imports
-    from src.connections.seller import connect_to_seller
+    from src.connections.seller import connect_to_seller, get_adcp_capabilities_tool
 
     try:
         async with connect_to_seller(agent) as client:
@@ -113,7 +181,7 @@ async def probe_seller(agent: SellerAgent) -> SellerAgent:
             agent.tools = [t.name for t in tools] if tools else []
             agent.status = "online"
 
-            # Classify by tools
+            # Classify by tools (baseline)
             tool_set = set(agent.tools)
             if SALES_TOOLS & tool_set:
                 agent.agent_type = "sales"
@@ -125,6 +193,51 @@ async def probe_seller(agent: SellerAgent) -> SellerAgent:
     except Exception as e:
         agent.status = "error"
         logger.debug(f"Probe failed for {agent.name}: {e}")
+        return agent
+
+    # If get_adcp_capabilities is available, call it for rich discovery
+    if "get_adcp_capabilities" in agent.tools:
+        try:
+            caps = await get_adcp_capabilities_tool(agent)
+            agent.capabilities = caps
+
+            # Extract structured fields
+            adcp_info = caps.get("adcp", {})
+            agent.adcp_versions = adcp_info.get("major_versions", [])
+            agent.supported_protocols = caps.get("supported_protocols", [])
+            agent.extensions_supported = caps.get("extensions_supported", [])
+
+            # Extract media buy portfolio if present
+            media_buy = caps.get("media_buy", {})
+            if media_buy:
+                agent.portfolio = media_buy.get("portfolio", {})
+
+            # Re-classify based on capabilities
+            if agent.supported_protocols:
+                if "media_buy" in agent.supported_protocols:
+                    agent.agent_type = "sales"
+                elif "signals" in agent.supported_protocols:
+                    agent.agent_type = "signals"
+
+            logger.info(
+                f"  {agent.name} capabilities: protocols={agent.supported_protocols}, "
+                f"extensions={agent.extensions_supported}"
+            )
+
+        except Exception as e:
+            logger.debug(f"get_adcp_capabilities failed for {agent.name}: {e}")
+
+    # Try fetching server card (non-blocking, best-effort)
+    try:
+        card = await fetch_server_card(agent.url)
+        if card:
+            agent.server_card = card
+            adcp_meta = _extract_adcp_meta(card)
+            if adcp_meta and not agent.supported_protocols:
+                agent.supported_protocols = adcp_meta.get("protocols_supported", [])
+                agent.extensions_supported = adcp_meta.get("extensions_supported", [])
+    except Exception:
+        pass
 
     return agent
 
@@ -137,8 +250,6 @@ async def discover_all_sellers(probe: bool = False) -> list[SellerAgent]:
 
     If probe=True, connects to each seller to discover tools and status.
     """
-    import asyncio
-
     sellers = get_configured_sellers()
     # Normalize URLs for dedup: strip trailing slash and /mcp suffix
     def _normalize_url(url: str) -> str:
