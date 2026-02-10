@@ -4,6 +4,8 @@ Tracks media buy operations through the AdCP state machine:
     submitted -> working -> completed | failed | input-required
 
 Pattern from: adcp/docs/building/implementation/orchestrator-design.mdx
+
+Dual-layer: in-memory dict for speed + SQLite for crash recovery.
 """
 
 import logging
@@ -50,11 +52,84 @@ class TrackedOperation:
 class OperationTracker:
     """Tracks all in-flight and completed AdCP operations.
 
-    MVP: in-memory dict. Will migrate to SQLite/PostgreSQL.
+    In-memory dict with optional SQLite persistence.
     """
 
     def __init__(self):
         self._operations: dict[str, TrackedOperation] = {}
+        self._db_enabled = False
+
+    async def init_db(self):
+        """Initialize database tables and load existing operations."""
+        from src.models.schema import init_db, async_session, OperationRecord
+        from sqlalchemy import select
+
+        await init_db()
+        self._db_enabled = True
+
+        # Load existing operations from DB
+        async with async_session() as session:
+            result = await session.execute(select(OperationRecord))
+            for row in result.scalars():
+                op = TrackedOperation(
+                    id=row.id,
+                    operation_type=row.operation_type,
+                    seller_name=row.seller_name,
+                    seller_url=row.seller_url,
+                    status=TaskStatus(row.status),
+                    task_id=row.task_id,
+                    context_id=row.context_id,
+                    media_buy_id=row.media_buy_id,
+                    buyer_ref=row.buyer_ref,
+                    request_data=row.request_data or {},
+                    response_data=row.response_data or {},
+                    error=row.error,
+                    created_at=row.created_at,
+                    updated_at=row.updated_at,
+                    poll_count=row.poll_count,
+                )
+                self._operations[op.id] = op
+
+        logger.info(f"Loaded {len(self._operations)} operations from database")
+
+    async def _persist(self, op: TrackedOperation):
+        """Persist an operation to SQLite."""
+        if not self._db_enabled:
+            return
+
+        from src.models.schema import async_session, OperationRecord
+        from sqlalchemy import select
+
+        async with async_session() as session:
+            existing = await session.get(OperationRecord, op.id)
+            if existing:
+                existing.status = op.status.value
+                existing.task_id = op.task_id
+                existing.context_id = op.context_id
+                existing.media_buy_id = op.media_buy_id
+                existing.response_data = op.response_data
+                existing.error = op.error
+                existing.poll_count = op.poll_count
+                existing.updated_at = op.updated_at
+            else:
+                session.add(OperationRecord(
+                    id=op.id,
+                    operation_type=op.operation_type,
+                    seller_name=op.seller_name,
+                    seller_url=op.seller_url,
+                    status=op.status.value,
+                    task_id=op.task_id,
+                    context_id=op.context_id,
+                    media_buy_id=op.media_buy_id,
+                    buyer_ref=op.buyer_ref,
+                    request_data=op.request_data,
+                    response_data=op.response_data,
+                    error=op.error,
+                    poll_count=op.poll_count,
+                    created_at=op.created_at,
+                    updated_at=op.updated_at,
+                ))
+            await session.commit()
 
     def create(
         self,

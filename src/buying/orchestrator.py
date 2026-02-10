@@ -61,41 +61,55 @@ class BuyingOrchestrator:
         self._sellers: list[SellerAgent] = []
         self._last_discovery: float = 0
 
-    async def discover_sellers(self, force: bool = False) -> list[SellerAgent]:
-        """Discover all available seller agents."""
-        self._sellers = await discover_all_sellers()
+    async def discover_sellers(self, probe: bool = True) -> list[SellerAgent]:
+        """Discover all available seller agents.
+
+        If probe=True, connects to each seller to discover tools and classify type.
+        """
+        self._sellers = await discover_all_sellers(probe=probe)
         return self._sellers
 
     @property
     def sellers(self) -> list[SellerAgent]:
         return self._sellers
 
+    @property
+    def sales_sellers(self) -> list[SellerAgent]:
+        """Sellers that support the media buy workflow (get_products + create_media_buy)."""
+        return [s for s in self._sellers if s.can_sell]
+
     async def get_products_from_all(
         self, brief: str, brand_name: str | None = None, brand_url: str | None = None
     ) -> list[SellerProduct]:
-        """Fan out get_products to all sellers, collect and normalize results."""
+        """Fan out get_products to all sales-capable sellers, collect and normalize results."""
         if not self._sellers:
             await self.discover_sellers()
 
         brand = brand_name or settings.brand_name
         url = brand_url or settings.brand_url
 
-        # Fan out to all sellers concurrently
+        # Only query sellers that have get_products
+        eligible = [s for s in self._sellers if "get_products" in s.tools]
+        if not eligible:
+            logger.warning("No sellers with get_products capability found")
+            eligible = self._sellers  # Fallback: try all
+
+        # Fan out to all eligible sellers concurrently
         tasks = []
-        for seller in self._sellers:
+        for seller in eligible:
             tasks.append(self._get_products_from_seller(seller, brief, brand, url))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Collect all products
         all_products: list[SellerProduct] = []
-        for seller, result in zip(self._sellers, results):
+        for seller, result in zip(eligible, results):
             if isinstance(result, Exception):
                 logger.warning(f"Failed to get products from {seller.name}: {result}")
                 continue
             all_products.extend(result)
 
-        logger.info(f"Found {len(all_products)} products across {len(self._sellers)} sellers")
+        logger.info(f"Found {len(all_products)} products across {len(eligible)} sellers")
         return all_products
 
     async def _get_products_from_seller(
@@ -109,8 +123,13 @@ class BuyingOrchestrator:
             return []
 
         products: list[SellerProduct] = []
-        raw_products = response.get("products", [])
 
+        # Handle text-only responses (some sellers return summaries without auth)
+        if "raw" in response and "products" not in response:
+            logger.info(f"{seller.name} returned text response: {response['raw'][:100]}")
+            return []
+
+        raw_products = response.get("products", [])
         for p in raw_products:
             # Extract price from pricing_options
             price_cpm = None
@@ -229,7 +248,7 @@ class BuyingOrchestrator:
 
             try:
                 response = await call_seller_tool(
-                    seller, "tasks/get", {"task_id": op.task_id, "include_result": True}
+                    seller, "get_task", {"task_id": op.task_id}
                 )
                 op = self.tracker.update_from_response(op.id, response)
                 op.poll_count += 1

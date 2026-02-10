@@ -33,11 +33,19 @@ async def lifespan(app: FastAPI):
     orch = BuyingOrchestrator()
     routes.orchestrator = orch
 
-    # Initial seller discovery
-    sellers = await orch.discover_sellers()
+    # Initialize SQLite database
+    await orch.tracker.init_db()
+
+    # Initial seller discovery with probing
+    sellers = await orch.discover_sellers(probe=True)
     logger.info(f"Discovered {len(sellers)} seller agents")
     for s in sellers:
-        logger.info(f"  - {s.name} ({s.url}) [auth={'yes' if s.token else 'no'}]")
+        status_tag = s.status.upper()
+        auth_tag = "auth" if s.token else "no-auth"
+        tools_tag = f"{len(s.tools)} tools" if s.tools else "unknown"
+        logger.info(f"  - {s.name} [{status_tag}] [{auth_tag}] [{tools_tag}] {s.url}")
+    sales = [s for s in sellers if s.can_sell]
+    logger.info(f"  {len(sales)} sellers can sell, {len(sellers) - len(sales)} other agents")
 
     yield
 
