@@ -223,8 +223,11 @@ async def get_signals(
     brief: str,
     platforms: list[dict] | None = None,
 ) -> dict[str, Any]:
-    """Discover audience signals from a signals agent."""
-    params: dict[str, Any] = {"brief": brief}
+    """Discover audience signals from a signals agent.
+
+    Dstillery (and potentially others) expect signal_spec, not brief.
+    """
+    params: dict[str, Any] = {"signal_spec": brief}
     if platforms:
         params["platforms"] = platforms
     return await call_seller_tool(agent, "get_signals", params)
