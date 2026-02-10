@@ -57,5 +57,10 @@ class Settings(BaseSettings):
     brand_name: str = "Nexflo"
     brand_url: str = "https://nexflo.io"
 
+    # Webhook receiver (set webhook_base_url to enable webhooks)
+    webhook_base_url: str = ""  # e.g., "https://nexflo.io" — must be publicly reachable
+    webhook_secret: str = ""  # HMAC shared secret (auto-generated if empty)
+    webhook_auth_scheme: str = "HMAC-SHA256"  # or "bearer"
+
 
 settings = Settings()

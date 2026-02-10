@@ -94,12 +94,16 @@ class OperationTracker:
         async with async_session() as session:
             result = await session.execute(select(OperationRecord))
             for row in result.scalars():
+                try:
+                    status = TaskStatus(row.status)
+                except ValueError:
+                    status = TaskStatus.UNKNOWN
                 op = TrackedOperation(
                     id=row.id,
                     operation_type=row.operation_type,
                     seller_name=row.seller_name,
                     seller_url=row.seller_url,
-                    status=TaskStatus(row.status),
+                    status=status,
                     task_id=row.task_id,
                     context_id=row.context_id,
                     media_buy_id=row.media_buy_id,
@@ -110,6 +114,10 @@ class OperationTracker:
                     created_at=row.created_at,
                     updated_at=row.updated_at,
                     poll_count=row.poll_count,
+                    application_context=row.application_context or {},
+                    webhook_config=row.webhook_config,
+                    input_required_message=row.input_required_message,
+                    input_required_data=row.input_required_data,
                 )
                 self._operations[op.id] = op
 
@@ -121,7 +129,6 @@ class OperationTracker:
             return
 
         from src.models.schema import async_session, OperationRecord
-        from sqlalchemy import select
 
         async with async_session() as session:
             existing = await session.get(OperationRecord, op.id)
@@ -134,6 +141,10 @@ class OperationTracker:
                 existing.error = op.error
                 existing.poll_count = op.poll_count
                 existing.updated_at = op.updated_at
+                existing.application_context = op.application_context
+                existing.webhook_config = op.webhook_config
+                existing.input_required_message = op.input_required_message
+                existing.input_required_data = op.input_required_data
             else:
                 session.add(OperationRecord(
                     id=op.id,
@@ -151,6 +162,10 @@ class OperationTracker:
                     poll_count=op.poll_count,
                     created_at=op.created_at,
                     updated_at=op.updated_at,
+                    application_context=op.application_context,
+                    webhook_config=op.webhook_config,
+                    input_required_message=op.input_required_message,
+                    input_required_data=op.input_required_data,
                 ))
             await session.commit()
 
@@ -238,6 +253,17 @@ class OperationTracker:
             for op in self._operations.values()
             if op.status in (TaskStatus.SUBMITTED, TaskStatus.WORKING)
         ]
+
+    def get_input_required(self) -> list[TrackedOperation]:
+        """Get operations awaiting human input."""
+        return [
+            op for op in self._operations.values()
+            if op.status == TaskStatus.INPUT_REQUIRED
+        ]
+
+    def get_poll_interval(self, op: TrackedOperation) -> int | None:
+        """Get recommended polling interval in seconds based on status."""
+        return POLLING_INTERVALS.get(op.status, 30)
 
     def list_all(self) -> list[TrackedOperation]:
         return sorted(self._operations.values(), key=lambda o: o.created_at, reverse=True)

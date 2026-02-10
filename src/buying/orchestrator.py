@@ -4,6 +4,9 @@ Workflow: discover sellers -> get products -> rank -> create media buy -> monito
 
 This is the brain of the buying agent. It coordinates across multiple seller
 agents to find the best inventory for an advertiser's brief.
+
+Phase 2: Adds session management, standard task polling, HITL, webhooks,
+and complete MCP tool support per the AdCP MCP Guide.
 """
 
 import asyncio
@@ -17,9 +20,16 @@ from src.connections.seller import (
     call_seller_tool,
     create_media_buy_on_seller,
     get_delivery,
-    get_seller_capabilities,
     get_seller_products,
+    tasks_get,
+    tasks_list,
+    update_media_buy as _update_media_buy,
+    sync_creatives as _sync_creatives,
+    provide_performance_feedback as _provide_feedback,
+    get_signals as _get_signals,
+    activate_signal as _activate_signal,
 )
+from src.connections.session import SellerSession
 from src.discovery.registry import SellerAgent, discover_all_sellers
 from src.buying.tracker import OperationTracker, TaskStatus
 
@@ -59,12 +69,21 @@ class BuyingOrchestrator:
     def __init__(self):
         self.tracker = OperationTracker()
         self._sellers: list[SellerAgent] = []
+        self._seller_sessions: dict[str, SellerSession] = {}
         self._last_discovery: float = 0
+
+    def get_seller_session(self, seller: SellerAgent) -> SellerSession:
+        """Get or create a session for a seller (maintains context_id)."""
+        key = seller.url.rstrip("/")
+        if key not in self._seller_sessions:
+            self._seller_sessions[key] = SellerSession(seller)
+        return self._seller_sessions[key]
 
     async def discover_sellers(self, probe: bool = True) -> list[SellerAgent]:
         """Discover all available seller agents.
 
-        If probe=True, connects to each seller to discover tools and classify type.
+        If probe=True, connects to each seller to discover tools, capabilities,
+        and server card metadata.
         """
         self._sellers = await discover_all_sellers(probe=probe)
         return self._sellers
@@ -75,8 +94,18 @@ class BuyingOrchestrator:
 
     @property
     def sales_sellers(self) -> list[SellerAgent]:
-        """Sellers that support the media buy workflow (get_products + create_media_buy)."""
+        """Sellers that support the media buy workflow."""
         return [s for s in self._sellers if s.can_sell]
+
+    def _find_seller_by_url(self, url: str) -> SellerAgent | None:
+        """Find a seller agent by URL."""
+        url = url.rstrip("/")
+        for s in self._sellers:
+            if s.url.rstrip("/") == url:
+                return s
+        return None
+
+    # --- Product Discovery ---
 
     async def get_products_from_all(
         self, brief: str, brand_name: str | None = None, brand_url: str | None = None
@@ -166,6 +195,8 @@ class BuyingOrchestrator:
 
         return sorted(products, key=sort_key)
 
+    # --- Media Buy Operations ---
+
     async def buy(
         self,
         product: SellerProduct,
@@ -176,6 +207,7 @@ class BuyingOrchestrator:
         """Execute a media buy on a specific product.
 
         Returns a BuyResult with the operation status and IDs.
+        Optionally attaches pushNotificationConfig when webhook_base_url is set.
         """
         ref = buyer_ref or f"nxflo-{uuid.uuid4().hex[:12]}"
         brand_manifest = {"name": settings.brand_name, "url": settings.brand_url}
@@ -193,6 +225,16 @@ class BuyingOrchestrator:
             },
         )
 
+        # Build webhook config if base URL is set
+        push_config = None
+        if settings.webhook_base_url:
+            from src.webhooks.config import build_push_notification_config
+            push_config = build_push_notification_config(
+                task_type="create_media_buy",
+                operation_id=op.id,
+            )
+            op.webhook_config = push_config
+
         try:
             response = await create_media_buy_on_seller(
                 agent=product.seller,
@@ -201,9 +243,11 @@ class BuyingOrchestrator:
                 buyer_ref=ref,
                 brand_manifest=brand_manifest,
                 end_time=end_time,
+                push_notification_config=push_config,
             )
 
             op = self.tracker.update_from_response(op.id, response)
+            await self.tracker._persist(op)
 
             return BuyResult(
                 operation_id=op.id,
@@ -216,6 +260,7 @@ class BuyingOrchestrator:
 
         except Exception as e:
             self.tracker.mark_failed(op.id, str(e))
+            await self.tracker._persist(op)
             return BuyResult(
                 operation_id=op.id,
                 seller_name=product.seller.name,
@@ -223,14 +268,86 @@ class BuyingOrchestrator:
                 error=str(e),
             )
 
+    async def update_media_buy_op(
+        self,
+        seller_url: str,
+        media_buy_id: str | None = None,
+        buyer_ref: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Update an existing media buy."""
+        seller = self._find_seller_by_url(seller_url)
+        if not seller:
+            raise ValueError(f"Seller not found: {seller_url}")
+        return await _update_media_buy(
+            seller,
+            media_buy_id=media_buy_id,
+            buyer_ref=buyer_ref,
+            **kwargs,
+        )
+
+    async def sync_creatives_op(
+        self,
+        seller_url: str,
+        creatives: list[dict],
+        media_buy_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Upload/sync creatives for a media buy."""
+        seller = self._find_seller_by_url(seller_url)
+        if not seller:
+            raise ValueError(f"Seller not found: {seller_url}")
+        return await _sync_creatives(seller, creatives=creatives, media_buy_id=media_buy_id)
+
+    async def provide_feedback_op(
+        self,
+        seller_url: str,
+        media_buy_id: str,
+        performance_index: float,
+        measurement_period: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Provide performance feedback to a seller."""
+        seller = self._find_seller_by_url(seller_url)
+        if not seller:
+            raise ValueError(f"Seller not found: {seller_url}")
+        return await _provide_feedback(
+            seller,
+            media_buy_id=media_buy_id,
+            performance_index=performance_index,
+            measurement_period=measurement_period,
+        )
+
+    # --- Signals ---
+
+    async def get_signals_op(
+        self, seller_url: str, brief: str, platforms: list[dict] | None = None
+    ) -> dict[str, Any]:
+        """Discover audience signals from a signals agent."""
+        seller = self._find_seller_by_url(seller_url)
+        if not seller:
+            raise ValueError(f"Seller not found: {seller_url}")
+        return await _get_signals(seller, brief=brief, platforms=platforms)
+
+    async def activate_signal_op(
+        self, seller_url: str, signal_id: str, platform: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Activate a signal for use in campaigns."""
+        seller = self._find_seller_by_url(seller_url)
+        if not seller:
+            raise ValueError(f"Seller not found: {seller_url}")
+        return await _activate_signal(seller, signal_id=signal_id, platform=platform)
+
+    # --- Delivery & Monitoring ---
+
     async def check_delivery(
         self, seller: SellerAgent, media_buy_id: str
     ) -> dict[str, Any]:
         """Check delivery metrics for a media buy."""
         return await get_delivery(seller, media_buy_id)
 
+    # --- Task Management (Standard: tasks/get, tasks/list) ---
+
     async def poll_pending_operations(self) -> list[dict]:
-        """Poll all pending operations for status updates."""
+        """Poll all pending operations for status updates using tasks/get."""
         pending = self.tracker.get_pending()
         results = []
 
@@ -238,22 +355,110 @@ class BuyingOrchestrator:
             if not op.task_id:
                 continue
 
-            # Find the seller for this operation
-            seller = next(
-                (s for s in self._sellers if s.url.rstrip("/") == op.seller_url.rstrip("/")),
-                None,
-            )
+            seller = self._find_seller_by_url(op.seller_url)
             if not seller:
                 continue
 
             try:
-                response = await call_seller_tool(
-                    seller, "get_task", {"task_id": op.task_id}
-                )
+                response = await tasks_get(seller, task_id=op.task_id, include_result=True)
                 op = self.tracker.update_from_response(op.id, response)
                 op.poll_count += 1
+                await self.tracker._persist(op)
                 results.append({"operation_id": op.id, "status": op.status.value})
             except Exception as e:
                 logger.warning(f"Failed to poll operation {op.id}: {e}")
 
         return results
+
+    async def list_seller_tasks(
+        self, seller: SellerAgent, statuses: list[str] | None = None
+    ) -> dict[str, Any]:
+        """List tasks on a specific seller using tasks/list."""
+        filters: dict[str, Any] = {}
+        if statuses:
+            filters["statuses"] = statuses
+        return await tasks_list(seller, filters=filters if filters else None)
+
+    async def reconcile_state(self, seller: SellerAgent) -> dict[str, Any]:
+        """Reconcile local operation state with server state using tasks/list.
+
+        Returns dict with:
+        - missing_from_client: task IDs on server not tracked locally
+        - missing_from_server: task IDs tracked locally but gone from server
+        - total_pending: count of pending tasks
+        """
+        try:
+            remote = await self.list_seller_tasks(
+                seller, statuses=["submitted", "working", "input-required"]
+            )
+        except Exception as e:
+            logger.warning(f"Reconciliation failed for {seller.name}: {e}")
+            return {"error": str(e)}
+
+        remote_tasks = remote.get("tasks", [])
+        server_ids = {t.get("task_id") for t in remote_tasks if t.get("task_id")}
+
+        # Local ops for this seller
+        local_ops = [
+            op for op in self.tracker.get_pending()
+            if op.seller_url.rstrip("/") == seller.url.rstrip("/") and op.task_id
+        ]
+        client_ids = {op.task_id for op in local_ops}
+
+        return {
+            "missing_from_client": list(server_ids - client_ids),
+            "missing_from_server": list(client_ids - server_ids),
+            "total_pending": len(remote_tasks),
+        }
+
+    async def reconcile_all_sellers(self) -> list[dict]:
+        """Reconcile state across all sellers that have pending operations."""
+        results = []
+        sellers_with_ops = set()
+        for op in self.tracker.get_pending():
+            sellers_with_ops.add(op.seller_url.rstrip("/"))
+
+        for seller in self._sellers:
+            if seller.url.rstrip("/") in sellers_with_ops:
+                result = await self.reconcile_state(seller)
+                results.append({"seller": seller.name, **result})
+
+        return results
+
+    # --- Human-in-the-Loop ---
+
+    async def provide_input(self, operation_id: str, input_data: str | dict) -> dict[str, Any]:
+        """Provide human input for an input-required operation.
+
+        Uses the stored context_id to resume the conversation with the seller.
+        """
+        op = self.tracker.get(operation_id)
+        if not op:
+            raise ValueError(f"Operation not found: {operation_id}")
+        if op.status != TaskStatus.INPUT_REQUIRED:
+            raise ValueError(
+                f"Operation {operation_id} is not input-required (status: {op.status.value})"
+            )
+
+        seller = self._find_seller_by_url(op.seller_url)
+        if not seller:
+            raise ValueError(f"Seller not found for operation: {operation_id}")
+
+        # Build params for resuming the operation
+        params: dict[str, Any] = {}
+        if op.context_id:
+            params["context_id"] = op.context_id
+        if isinstance(input_data, str):
+            params["additional_info"] = input_data
+        else:
+            params.update(input_data)
+
+        try:
+            response = await call_seller_tool(seller, op.operation_type, params)
+            self.tracker.update_from_response(op.id, response)
+            await self.tracker._persist(op)
+            return response
+        except Exception as e:
+            self.tracker.mark_failed(op.id, f"Input submission failed: {e}")
+            await self.tracker._persist(op)
+            raise
