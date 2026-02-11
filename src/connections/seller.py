@@ -133,7 +133,7 @@ async def get_seller_capabilities(agent: SellerAgent) -> dict[str, Any]:
 
 
 async def get_seller_products(
-    agent: SellerAgent, brief: str, brand_name: str = "Nexflo", brand_url: str = "https://nexflo.io"
+    agent: SellerAgent, brief: str, brand_name: str = "Nexflo", brand_url: str = "https://nexflo.ai"
 ) -> dict[str, Any]:
     """Get products from a seller matching a brief."""
     return await call_seller_tool(
