@@ -5,14 +5,14 @@ variable "environment" {
 }
 
 variable "hosted_zone_id" {
-  description = "Route53 hosted zone ID for nexflo.io"
+  description = "Route53 hosted zone ID for nexflo.ai"
   type        = string
 }
 
 variable "domain_name" {
   description = "Custom domain for the buyer service"
   type        = string
-  default     = "buyer.nexflo.io"
+  default     = "buyer.nexflo.ai"
 }
 
 variable "aws_region" {

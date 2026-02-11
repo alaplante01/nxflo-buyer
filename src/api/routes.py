@@ -45,7 +45,7 @@ class DiscoverResponse(BaseModel):
 class ProductSearchRequest(BaseModel):
     brief: str = Field(..., description="Natural language description of what you want to buy")
     brand_name: str = Field(default="Nexflo")
-    brand_url: str = Field(default="https://nexflo.io")
+    brand_url: str = Field(default="https://nexflo.ai")
 
 
 class ProductSearchResponse(BaseModel):
@@ -58,7 +58,7 @@ class BuyRequest(BaseModel):
     brief: str = Field(..., description="What inventory to buy")
     budget: float = Field(..., gt=0, description="Budget in USD")
     brand_name: str = Field(default="Nexflo")
-    brand_url: str = Field(default="https://nexflo.io")
+    brand_url: str = Field(default="https://nexflo.ai")
     buyer_ref: str | None = Field(default=None, description="Idempotency key")
     end_time: str | None = Field(default=None, description="Campaign end (ISO 8601)")
     product_index: int = Field(default=0, description="Which ranked product to buy (0 = best)")
