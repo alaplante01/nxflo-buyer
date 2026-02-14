@@ -6,6 +6,7 @@ dist/
 build/
 *.db
 .env
+.claude/
 
 # Terraform
 deploy/terraform/.terraform/
