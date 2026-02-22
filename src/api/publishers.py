@@ -76,7 +76,7 @@ async def register_publisher(req: PublisherCreateRequest):
         domain=domain,
         email=req.email,
         status="active",
-        created_at=datetime.now(UTC),
+        created_at=datetime.now(UTC).replace(tzinfo=None),
     )
 
     try:
