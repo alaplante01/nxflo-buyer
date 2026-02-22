@@ -80,7 +80,7 @@ function nexflo_ads_inject_script() {
         $attrs .= ' data-timeout="' . esc_attr($timeout) . '"';
     }
 
-    echo '<script src="https://cdn.nexflo.ai/prebid-wrapper.js" ' . $attrs . ' async></script>' . "\n";
+    echo '<script src="https://static.nexflo.ai/prebid-wrapper.js" ' . $attrs . ' async></script>' . "\n";
 }
 add_action('wp_head', 'nexflo_ads_inject_script', 1);
 

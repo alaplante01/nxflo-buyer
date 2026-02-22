@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 
 from src.api import routes
+from src.api.publishers import router as publishers_router
 from src.buying.orchestrator import BuyingOrchestrator
 from src.buying.poller import BackgroundPoller
 from src.config import settings
@@ -86,6 +87,7 @@ app.add_middleware(RateLimitMiddleware, rate=settings.rate_limit_per_minute, win
 app.add_middleware(CorrelationIdMiddleware)
 app.include_router(routes.router)
 app.include_router(webhook_router)
+app.include_router(publishers_router)
 
 
 @app.get("/metrics", include_in_schema=False)
