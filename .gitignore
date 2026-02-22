@@ -13,3 +13,12 @@ deploy/terraform/.terraform/
 deploy/terraform/terraform.tfstate*
 deploy/terraform/tfplan
 deploy/terraform/.terraform.lock.hcl
+
+# AWS infrastructure config artifacts
+publisher/cf-*.json
+publisher/r53-*.json
+publisher/oac-config.json
+publisher/s3-bucket-policy.json
+
+# Build artifacts
+publisher/nexflo-ads.zip

@@ -1,10 +1,9 @@
 """Publisher model for the publisher acquisition pipeline."""
 
-from datetime import UTC, datetime
-
 from sqlalchemy import Column, DateTime, String
 
 from src.models.schema import Base
+from src.utils import utcnow
 
 
 class PublisherRecord(Base):
@@ -18,4 +17,4 @@ class PublisherRecord(Base):
     domain = Column(String, nullable=False, index=True, unique=True)
     email = Column(String, nullable=True)
     status = Column(String, nullable=False, default="active")
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime, default=utcnow)

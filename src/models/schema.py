@@ -1,12 +1,11 @@
 """SQLAlchemy models for persisting buying agent state."""
 
-from datetime import UTC, datetime
-
 from sqlalchemy import Column, DateTime, Integer, String, Text, JSON
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from src.config import settings
+from src.utils import utcnow
 
 
 class Base(AsyncAttrs, DeclarativeBase):
@@ -31,8 +30,8 @@ class OperationRecord(Base):
     response_data = Column(JSON, default=dict)
     error = Column(Text, nullable=True)
     poll_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     # Phase 2 fields
     application_context = Column(JSON, default=dict)
     webhook_config = Column(JSON, nullable=True)
@@ -87,7 +86,7 @@ class WebhookEventRecord(Base):
     operation_id = Column(String, nullable=True, index=True)
     status = Column(String, nullable=False)
     timestamp = Column(DateTime, nullable=False)
-    processed_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    processed_at = Column(DateTime, default=utcnow)
     raw_payload = Column(JSON, default=dict)
 
 
