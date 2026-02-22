@@ -3,6 +3,7 @@
 Publishers register here to get a site_id, which they paste into the WordPress plugin.
 """
 
+import logging
 import secrets
 from datetime import UTC, datetime
 
@@ -13,6 +14,8 @@ from sqlalchemy.exc import IntegrityError
 
 from src.models.publisher import PublisherRecord
 from src.models.schema import async_session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/publishers", tags=["publishers"])
 
@@ -43,7 +46,7 @@ class PublisherResponse(BaseModel):
 
 def _to_response(pub: PublisherRecord) -> PublisherResponse:
     snippet = (
-        f'<script src="https://cdn.nexflo.ai/prebid-wrapper.js" '
+        f'<script src="https://static.nexflo.ai/prebid-wrapper.js" '
         f'data-site-id="{pub.site_id}" async></script>'
     )
     return PublisherResponse(
@@ -76,21 +79,26 @@ async def register_publisher(req: PublisherCreateRequest):
         created_at=datetime.now(UTC),
     )
 
-    async with async_session() as session:
-        try:
-            session.add(pub)
-            await session.commit()
-            await session.refresh(pub)
-        except IntegrityError:
-            await session.rollback()
-            # Domain already registered — return existing record
-            result = await session.execute(
-                select(PublisherRecord).where(PublisherRecord.domain == domain)
-            )
-            existing = result.scalar_one_or_none()
-            if existing:
-                return _to_response(existing)
-            raise HTTPException(status_code=409, detail="Domain already registered")
+    try:
+        async with async_session() as session:
+            try:
+                session.add(pub)
+                await session.commit()
+                await session.refresh(pub)
+            except IntegrityError:
+                await session.rollback()
+                result = await session.execute(
+                    select(PublisherRecord).where(PublisherRecord.domain == domain)
+                )
+                existing = result.scalar_one_or_none()
+                if existing:
+                    return _to_response(existing)
+                raise HTTPException(status_code=409, detail="Domain already registered")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to register publisher domain=%s", domain)
+        raise HTTPException(status_code=500, detail="Registration failed")
 
     return _to_response(pub)
 
