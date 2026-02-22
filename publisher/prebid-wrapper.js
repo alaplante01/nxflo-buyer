@@ -2,7 +2,7 @@
  * Nexflo Prebid Wrapper — Zero-config header bidding for publishers
  * Drop this script on any page to monetize with header bidding via pbs.nexflo.ai
  *
- * Usage: <script src="https://cdn.nexflo.ai/prebid-wrapper.js" data-site-id="YOUR_SITE_ID"></script>
+ * Usage: <script src="https://static.nexflo.ai/prebid-wrapper.js" data-site-id="YOUR_SITE_ID"></script>
  *
  * Optional attributes:
  *   data-site-id       — Publisher site ID (required)
@@ -28,7 +28,7 @@
     floor: parseFloat(scriptTag.getAttribute("data-floor")) || 0,
     timeout: parseInt(scriptTag.getAttribute("data-timeout"), 10) || 1500,
     pbsEndpoint: "https://pbs.nexflo.ai/openrtb2/auction",
-    prebidCdn: "https://cdn.nexflo.ai/vendor/prebid.js",
+    prebidCdn: "https://static.nexflo.ai/vendor/prebid.js",
   };
 
   if (!CONFIG.siteId) {
@@ -166,7 +166,6 @@
         s2sConfig: {
           accountId: CONFIG.siteId,
           bidders: ["nexflo"],
-          defaultVendor: "appnexus", // PBS adapter base
           timeout: CONFIG.timeout,
           endpoint: {
             p1Consent: CONFIG.pbsEndpoint,
