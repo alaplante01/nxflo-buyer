@@ -11,8 +11,10 @@ Dual-layer: in-memory dict for speed + SQLite for crash recovery.
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import Enum
+
+from src.utils import utcnow
 
 from src.metrics import operations_created_total, operations_current
 
@@ -64,8 +66,8 @@ class TrackedOperation:
     request_data: dict = field(default_factory=dict)
     response_data: dict = field(default_factory=dict)
     error: str | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=lambda: utcnow())
+    updated_at: datetime = field(default_factory=lambda: utcnow())
     poll_count: int = 0
     # Phase 2 fields
     application_context: dict = field(default_factory=dict)  # Opaque context echoed by sellers
@@ -202,7 +204,7 @@ class OperationTracker:
         """Update operation state from a seller response."""
         op = self._operations[op_id]
         old_status = op.status
-        op.updated_at = datetime.now(UTC)
+        op.updated_at = utcnow()
         op.response_data = response
 
         # Extract status from response
@@ -253,7 +255,7 @@ class OperationTracker:
         old_status = op.status
         op.status = TaskStatus.FAILED
         op.error = error
-        op.updated_at = datetime.now(UTC)
+        op.updated_at = utcnow()
         if op.status != old_status:
             operations_current.labels(status=old_status.value).dec()
             operations_current.labels(status=TaskStatus.FAILED.value).inc()

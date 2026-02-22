@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy Nexflo publisher scripts to cdn.nexflo.ai (S3 + CloudFront)
+# Deploy Nexflo publisher scripts to static.nexflo.ai (S3 + CloudFront)
 #
 # Prerequisites:
 #   - AWS CLI configured (us-east-1, with s3:PutObject on nxflo-assets)
@@ -57,5 +57,5 @@ fi
 
 echo ""
 echo "Done. Verify:"
-echo "  curl -I https://cdn.nexflo.ai/prebid-wrapper.js"
-echo "  curl -I https://cdn.nexflo.ai/vendor/prebid.js"
+echo "  curl -I https://static.nexflo.ai/prebid-wrapper.js"
+echo "  curl -I https://static.nexflo.ai/vendor/prebid.js"

@@ -5,7 +5,6 @@ Publishers register here to get a site_id, which they paste into the WordPress p
 
 import logging
 import secrets
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -14,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src.models.publisher import PublisherRecord
 from src.models.schema import async_session
+from src.utils import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ async def register_publisher(req: PublisherCreateRequest):
         domain=domain,
         email=req.email,
         status="active",
-        created_at=datetime.now(UTC).replace(tzinfo=None),
+        created_at=utcnow(),
     )
 
     try:

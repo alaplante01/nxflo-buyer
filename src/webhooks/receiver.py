@@ -11,12 +11,13 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.config import settings
+from src.utils import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +115,9 @@ async def _check_idempotency(event_id: str, task_id: str, operation_id: str, sta
     """Check if this webhook event was already processed. Records it if new."""
     from src.models.schema import async_session, WebhookEventRecord
 
-    ts = datetime.now(UTC)
+    ts = utcnow()
     try:
-        ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).replace(tzinfo=None)
     except (ValueError, TypeError):
         pass
 

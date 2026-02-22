@@ -11,7 +11,7 @@
  *   cd Prebid.js
  *   npm install
  *   gulp bundle --modules=nexfloBidAdapter,prebidServerBidAdapter
- *   # Output: build/dist/prebid.js → upload to cdn.nexflo.ai/vendor/prebid.js
+ *   # Output: build/dist/prebid.js → upload to static.nexflo.ai/vendor/prebid.js
  */
 
 import { registerBidder } from "../src/adapters/bidderFactory.js";
