@@ -71,7 +71,7 @@
 | nxflo-db-proxy | `nxflo-db-proxy.proxy-c2vymsmgm54m.us-east-1.rds.amazonaws.com` |
 | nxflo-buyer-proxy | `nxflo-buyer-proxy.proxy-c2vymsmgm54m.us-east-1.rds.amazonaws.com` |
 
-**DB password:** Stored in `nxflo/buyer/aurora-password` in Secrets Manager. Value: `[REDACTED]` (auto-rotation OFF).
+**DB password:** Stored in `nxflo/buyer/aurora-password` in AWS Secrets Manager. Retrieve with: `aws secretsmanager get-secret-value --secret-id nxflo/buyer/aurora-password`
 
 **Snapshot name:** `nxflo-db-parking-20260225`
 
