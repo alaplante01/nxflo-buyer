@@ -2,7 +2,6 @@
 
 import asyncio
 import os
-import sys
 
 # Use a test database
 os.environ["NXFLO_DATABASE_URL"] = "sqlite+aiosqlite:///test_nxflo.db"

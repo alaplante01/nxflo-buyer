@@ -1,5 +1,101 @@
 # Changelog
 
+## [0.5.0] - 2026-10-11 — 3.2.1 buyer compliance
+
+Upgrade from the 3.0.0-beta.2-era buyer to AdCP 3.2.1 buyer compliance
+(spec: adcontextprotocol docs @ v3.2.1 / ec882d2; schemas pinned at `/schemas/3.2.1/`).
+
+### Accounts (3.2 account model)
+
+- New `src/accounts/`: `list_accounts` (with pagination) and `sync_accounts`
+  (provisioning mode, `idempotency_key`, explicit `billing`, sandbox / fixed-currency /
+  buyer-selected-timezone handling) clients, persisted per seller in the new
+  `seller_accounts` table (alembic `004`).
+- Both seller models: buyer-declared (`require_operator_auth: false`, our bearer,
+  natural-key `account` refs — a seller-issued `account_id` is never sent) and
+  operator-authorized (`require_operator_auth: true`, operator credential from
+  `NXFLO_OPERATOR_TOKEN_<SLUG>`, `{account_id}` from `list_accounts` or
+  `NXFLO_OPERATOR_ACCOUNT_ID_<SLUG>`). Mode from capabilities, overridable via
+  `NXFLO_ACCOUNT_MODE` / `NXFLO_ACCOUNT_MODE_<SLUG>`.
+- `account` + `idempotency_key` now sent on `create_media_buy`, `update_media_buy`
+  and `sync_creatives`; `idempotency_key` on `provide_performance_feedback`.
+  `get_products` omits `account` until the account is provisioned and usable.
+- Account status gates calls (only `active` may `create_media_buy`); `pending_approval`
+  surfaces the seller's `setup.url`. Billing is never silently remapped.
+- REST: `GET /accounts`, `POST /accounts/list`, `POST /accounts/sync`.
+
+### Brand Protocol
+
+- New `src/brand/resolver.py`: resolves `/.well-known/brand.json` (House Portfolio,
+  House Redirect, authoritative_location, Brand Canonical Document with
+  mutual-assertion check), cached (24 h / 1 h negative), SSRF-safe fetch.
+- Builds the BrandRef (`domain`, optional `brand_id`, sorted `countries`) used in
+  `get_products`, `create_media_buy` and account natural keys (replaces `brand_manifest`).
+- Before `create_media_buy` / `sync_accounts`, our operator (`NXFLO_OPERATOR_DOMAIN`,
+  default `nxflo.io`) must be in the brand's `authorized_operators` (brand, country,
+  scope and validity window honoured). Fails closed with a coded error.
+
+### Sales-agent authorization (adagents.json)
+
+- New `src/authorization/adagents.py`: before `create_media_buy`, every publisher in
+  `product.publisher_properties[]` must authorize the seller's exact agent URL (AdCP
+  URL canonicalization) for all claimed properties (property_ids / property_tags /
+  inline / publisher_properties; effective window, countries, collections, placements,
+  revoked domains). Missing or invalid files fail closed. Skippable only with
+  `NXFLO_SKIP_SALES_AGENT_AUTHORIZATION_CHECK=true` (sandbox use; logged).
+
+### Buyer-side agent surface
+
+- MCP endpoint mounted at `/mcp` (stateless streamable HTTP) answering
+  `get_adcp_capabilities` with `adcp`, `supported_protocols`
+  (`NXFLO_AGENT_SUPPORTED_PROTOCOLS`) and `identity.brand_json_url`; public URL is
+  `NXFLO_AGENT_URL`.
+- `GET /.well-known/jwks.json` publishes request-signing public keys.
+
+### Request signing (RFC 9421, optional in 3.2)
+
+- New `src/signing/`: AdCP 3.2 profile (`@method`, `@target-uri`, `@authority`,
+  `content-type`, `content-digest`; `tag="adcp/request-signing/v1"`; padded
+  sf-binary), Ed25519 and ECDSA P-256 keys from env/file, key generator
+  (`python -m src.signing.keygen`), httpx2 auth hook signing `tools/call` requests the
+  seller lists in `request_signing.*_for`. Behind `NXFLO_SIGNING_ENABLED` (default
+  false). Verified byte-for-byte against the published 3.2 conformance vectors.
+
+### Reliability
+
+- Bounded retry budget per operation (<= 3 retries, <= 300 s cumulative), transient
+  errors only, `retry_after` ceil/clamp, jittered backoff; mutations retried only with
+  an `idempotency_key` on sellers declaring idempotency support. The session's
+  context-expired retry consumes the same budget; the background poller is single-attempt.
+- MCP tool errors (`isError`) are parsed into `SellerToolError` with the AdCP error
+  code/recovery; structuredContent is preferred over text content.
+
+### create_media_buy / get_products (3.2.1 shapes)
+
+- `create_media_buy`: `idempotency_key`, `account`, `brand`, explicit
+  `budget_allocation: {"mode": "fixed"}` unless a `seller_optimized` block is supplied
+  (checked against `media_buy.features.seller_optimized_budget`; omitted for proposal
+  execution), `format_option_refs` from `product.format_options` (deprecated
+  `format_ids` only for legacy products), correlation in `context.buyer_ref`.
+- `get_products`: `buying_mode: "brief"` + BrandRef; `adcp_version` on 3.2-shaped requests.
+
+### Registry discovery
+
+- Registry base URL is a setting: `NXFLO_REGISTRY_URL` (default
+  `https://agenticadvertising.org/api/registry`) with `NXFLO_REGISTRY_FALLBACK_URL`
+  (`https://adcontextprotocol.org/api/registry`). Parses the current `/agents` entry
+  shape (`mcp_endpoint`, `protocol`, `member`), buys only from `type == "sales"`.
+- Per-seller tokens: `NXFLO_SELLER_TOKEN_<SLUG>` now honoured for any seller.
+
+### Housekeeping
+
+- macOS commands in CLAUDE.md; `ruff check src/ tests/` clean under ruff 0.17
+  (import sorting, narrowed/logged exception handlers, `str.removeprefix("www.")`
+  in `api/publishers.py` replacing a `lstrip("www.")` character-set bug).
+- Live tests read the test-agent token from `NXFLO_SELLER_TOKEN_ADCP_TEST` instead of
+  hardcoding it (skipped when unset).
+- Dependencies: `fastmcp>=4.1.0`, `httpx2`, `cryptography`, `idna`.
+
 ## [0.4.0] - 2026-02-10 — Production Hardening
 
 Production readiness overhaul. Two rounds of fixes based on a full code review

@@ -2,15 +2,15 @@
 
 Tests which sellers accept unauthenticated MCP connections and
 what tools they expose. Run with:
-    .venv/Scripts/python -m tests.test_probe_sellers
+    .venv/bin/python -m tests.test_probe_sellers
 """
 
 import asyncio
-import sys
 import logging
+import sys
 
+from src.connections.seller import SellerConnectionError, connect_to_seller
 from src.discovery.registry import discover_all_sellers
-from src.connections.seller import connect_to_seller, SellerConnectionError
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -24,8 +24,6 @@ async def probe_seller(agent):
             return {"status": "ok", "tools": tool_names}
     except SellerConnectionError as e:
         return {"status": "error", "error": str(e)}
-    except Exception as e:
-        return {"status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
 async def main():
@@ -56,7 +54,7 @@ async def main():
     print(f"Results: {ok} accessible, {fail} failed, {len(results)} total")
 
     if ok > 0:
-        print(f"\nAccessible sellers:")
+        print("\nAccessible sellers:")
         for seller, r in results:
             if r["status"] == "ok":
                 print(f"  - {seller.name}: {len(r['tools'])} tools")

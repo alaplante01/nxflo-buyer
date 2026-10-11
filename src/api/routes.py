@@ -9,7 +9,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from src.accounts.manager import AccountError
+from src.brand.resolver import BrandAuthorizationError
 from src.buying.orchestrator import BuyingOrchestrator
+from src.connections.errors import SellerError
 
 router = APIRouter()
 
@@ -46,6 +49,9 @@ class ProductSearchRequest(BaseModel):
     brief: str = Field(..., description="Natural language description of what you want to buy")
     brand_name: str = Field(default="Nexflo")
     brand_url: str = Field(default="https://nexflo.ai")
+    brand_domain: str | None = Field(default=None, description="Advertiser domain hosting /.well-known/brand.json (defaults to brand_url's host)")
+    brand_id: str | None = Field(default=None, description="Brand id within a house portfolio")
+    brand_countries: list[str] | None = Field(default=None, description="ISO 3166-1 alpha-2 countries qualifying the advertiser identity")
 
 
 class ProductSearchResponse(BaseModel):
@@ -68,6 +74,10 @@ class BuyRequest(BaseModel):
     pacing: str | None = Field(default=None, description="Pacing: even, asap, or front_loaded")
     proposal_id: str | None = Field(default=None, description="Proposal ID from get_products (skips package building)")
     currency: str = Field(default="USD", description="Currency code (ISO 4217)")
+    brand_domain: str | None = Field(default=None, description="Advertiser domain hosting /.well-known/brand.json (defaults to brand_url's host)")
+    brand_id: str | None = Field(default=None, description="Brand id within a house portfolio")
+    brand_countries: list[str] | None = Field(default=None, description="ISO 3166-1 alpha-2 countries qualifying the advertiser identity")
+    budget_allocation: dict | None = Field(default=None, description='Omit for {"mode": "fixed"}; pass a seller_optimized block to delegate allocation')
 
 
 class BuyResponse(BaseModel):
@@ -121,6 +131,21 @@ class SignalsDiscoverRequest(BaseModel):
     platforms: list[dict] | None = Field(default=None)
 
 
+class ListAccountsRequest(BaseModel):
+    seller_url: str = Field(..., description="Seller agent URL")
+    status: str | None = Field(default=None, description="Filter by account status")
+    sandbox: bool | None = Field(default=None, description="Only sandbox (true) or production (false) accounts")
+
+
+class SyncAccountsRequest(BaseModel):
+    seller_url: str = Field(..., description="Seller agent URL")
+    brand_domain: str | None = Field(default=None, description="Advertiser domain (defaults to NXFLO_BRAND_URL's host)")
+    brand_id: str | None = Field(default=None)
+    brand_countries: list[str] | None = Field(default=None)
+    billing: str | None = Field(default=None, description="operator | agent | advertiser (default NXFLO_ACCOUNT_BILLING)")
+    dry_run: bool = Field(default=False)
+
+
 class SignalActivateRequest(BaseModel):
     seller_url: str = Field(..., description="Signals agent URL")
     signal_id: str = Field(..., description="Signal ID to activate")
@@ -163,7 +188,14 @@ async def discover_sellers():
 async def search_products(req: ProductSearchRequest):
     """Search for products across all sellers matching a brief."""
     orch = get_orchestrator()
-    products = await orch.get_products_from_all(req.brief, req.brand_name, req.brand_url)
+    products = await orch.get_products_from_all(
+        req.brief,
+        req.brand_name,
+        req.brand_url,
+        brand_domain=req.brand_domain,
+        brand_id=req.brand_id,
+        countries=req.brand_countries,
+    )
     ranked = orch.rank_products(products)
 
     return ProductSearchResponse(
@@ -206,7 +238,14 @@ async def buy_inventory(req: BuyRequest):
     orch = get_orchestrator()
 
     # Step 1: Get and rank products
-    products = await orch.get_products_from_all(req.brief, req.brand_name, req.brand_url)
+    products = await orch.get_products_from_all(
+        req.brief,
+        req.brand_name,
+        req.brand_url,
+        brand_domain=req.brand_domain,
+        brand_id=req.brand_id,
+        countries=req.brand_countries,
+    )
     if not products:
         raise HTTPException(status_code=404, detail="No products found matching brief")
 
@@ -229,6 +268,10 @@ async def buy_inventory(req: BuyRequest):
         pacing=req.pacing,
         proposal_id=req.proposal_id,
         currency=req.currency,
+        brand_domain=req.brand_domain or None,
+        brand_id=req.brand_id,
+        brand_countries=req.brand_countries,
+        budget_allocation=req.budget_allocation,
     )
 
     return BuyResponse(
@@ -347,7 +390,9 @@ async def update_media_buy(req: UpdateMediaBuyRequest):
             packages=req.packages,
         )
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except AccountError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @router.post("/media-buy/creatives/sync")
@@ -361,7 +406,9 @@ async def sync_creatives(req: SyncCreativesRequest):
             media_buy_id=req.media_buy_id,
         )
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except AccountError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @router.post("/media-buy/creatives/list")
@@ -423,6 +470,58 @@ async def activate_signal(req: SignalActivateRequest):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# --- Accounts (AdCP 3.2) ---
+
+
+@router.get("/accounts")
+async def list_known_accounts(seller_url: str | None = None) -> dict[str, Any]:
+    """Accounts persisted from previous list_accounts / sync_accounts calls."""
+    orch = get_orchestrator()
+    accounts = (
+        orch.accounts.accounts_for(seller_url) if seller_url else orch.accounts.all_accounts()
+    )
+    return {"accounts": [a.to_api() for a in accounts], "count": len(accounts)}
+
+
+@router.post("/accounts/list")
+async def list_seller_accounts(req: ListAccountsRequest) -> dict[str, Any]:
+    """Call list_accounts on a seller (account discovery / status polling)."""
+    orch = get_orchestrator()
+    try:
+        accounts = await orch.list_accounts_op(req.seller_url, status=req.status, sandbox=req.sandbox)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except AccountError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except SellerError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return {"accounts": [a.to_api() for a in accounts], "count": len(accounts)}
+
+
+@router.post("/accounts/sync")
+async def sync_seller_accounts(req: SyncAccountsRequest) -> dict[str, Any]:
+    """Provision a buyer-declared account (brand.json authorization is checked first)."""
+    orch = get_orchestrator()
+    try:
+        accounts = await orch.sync_accounts_op(
+            req.seller_url,
+            brand_domain=req.brand_domain,
+            brand_id=req.brand_id,
+            countries=req.brand_countries,
+            billing=req.billing,
+            dry_run=req.dry_run,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except BrandAuthorizationError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    except AccountError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except SellerError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return {"accounts": [a.to_api() for a in accounts], "count": len(accounts)}
+
+
 # --- Single Operation Detail ---
 
 
@@ -468,6 +567,6 @@ async def health():
     return {
         "status": "ok",
         "service": "nxflo-buyer",
-        "version": "0.3.0",
+        "version": "0.5.0",
         "circuit_breakers": circuit_breakers.status_summary(),
     }

@@ -2,7 +2,10 @@
 
 Discovery uses multiple mechanisms (per AdCP MCP Guide):
 1. Local config (pre-configured sellers with auth tokens)
-2. AdCP registry API
+2. AdCP registry API: GET {registry}/agents on the primary registry
+   (NXFLO_REGISTRY_URL), falling back to NXFLO_REGISTRY_FALLBACK_URL. Entries are
+   shaped {name, url, type, protocol, mcp_endpoint, member{slug, display_name},
+   contact, description}; only type == "sales" entries are bought from.
 3. Server card (/.well-known/mcp.json)
 4. get_adcp_capabilities tool (protocol-recommended discovery)
 """
@@ -10,11 +13,13 @@ Discovery uses multiple mechanisms (per AdCP MCP Guide):
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
-from src.config import DEFAULT_SELLERS, settings
+from src.accounts.mode import AccountMode, determine_account_mode
+from src.config import DEFAULT_SELLERS, seller_env, settings
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +48,16 @@ class SellerAgent:
     portfolio: dict = field(default_factory=dict)
     extensions_supported: list[str] = field(default_factory=list)
     server_card: dict | None = None
+
+    # Registry metadata
+    protocol: str = "mcp"
+    member_slug: str | None = None
+    member_name: str | None = None
+    description: str | None = None
+
+    # Accounts: mode and the operator credential used in operator-authorized mode
+    account_mode: AccountMode = AccountMode.BUYER_DECLARED
+    operator_token: str | None = None
 
     @property
     def can_sell(self) -> bool:
@@ -76,6 +91,38 @@ class SellerAgent:
     def has_creatives(self) -> bool:
         return bool(CREATIVE_TOOLS & set(self.tools))
 
+    @property
+    def account_capabilities(self) -> dict[str, Any]:
+        account = self.capabilities.get("account")
+        return account if isinstance(account, dict) else {}
+
+    @property
+    def request_signing_capabilities(self) -> dict[str, Any]:
+        signing = self.capabilities.get("request_signing")
+        return signing if isinstance(signing, dict) else {}
+
+    @property
+    def idempotency_supported(self) -> bool:
+        """True only when the seller explicitly declares idempotency replay support."""
+        adcp = self.capabilities.get("adcp")
+        idem = adcp.get("idempotency") if isinstance(adcp, dict) else None
+        return isinstance(idem, dict) and idem.get("supported") is True
+
+    @property
+    def supported_versions(self) -> list[str]:
+        adcp = self.capabilities.get("adcp")
+        versions = adcp.get("supported_versions") if isinstance(adcp, dict) else None
+        return [str(v) for v in versions] if isinstance(versions, list) else []
+
+    def has_tool(self, name: str) -> bool:
+        """Whether the seller exposes a tool; unknown tool lists are treated as present."""
+        return not self.tools or name in self.tools
+
+    def apply_account_config(self) -> None:
+        """Derive account mode and operator credential from config + capabilities."""
+        self.account_mode = determine_account_mode(self.url, self.capabilities)
+        self.operator_token = seller_env("NXFLO_OPERATOR_TOKEN", self.url)
+
 
 async def fetch_server_card(base_url: str) -> dict | None:
     """Check /.well-known/mcp.json and /.well-known/server.json on seller domain.
@@ -94,7 +141,8 @@ async def fetch_server_card(base_url: str) -> dict | None:
                     data = resp.json()
                     logger.debug(f"Found server card at {origin}{path}")
                     return data
-            except Exception:
+            except (httpx.HTTPError, ValueError):
+                logger.debug("No server card at %s%s", origin, path, exc_info=True)
                 continue
 
     return None
@@ -106,47 +154,66 @@ def _extract_adcp_meta(server_card: dict) -> dict:
     return meta.get("adcontextprotocol.org", {})
 
 
+def registry_base_urls() -> list[str]:
+    """Primary registry first, then the fallback (deduplicated, empty values dropped)."""
+    urls: list[str] = []
+    for url in (settings.registry_url, settings.registry_fallback_url):
+        base = (url or "").rstrip("/")
+        if base and base not in urls:
+            urls.append(base)
+    return urls
+
+
+def parse_registry_entry(entry: dict[str, Any]) -> SellerAgent | None:
+    """Turn one registry /agents entry into a SellerAgent, or None if not buyable."""
+    if entry.get("type") != "sales":
+        return None
+    protocol = str(entry.get("protocol") or "mcp").lower()
+    url = entry.get("mcp_endpoint") or (entry.get("url") if protocol == "mcp" else None)
+    if not url:
+        logger.debug("Skipping non-MCP registry agent %s", entry.get("name"))
+        return None
+    member = entry.get("member") if isinstance(entry.get("member"), dict) else {}
+    health = entry.get("health")
+    return SellerAgent(
+        name=entry.get("name", "Unknown"),
+        url=url,
+        token=seller_env("NXFLO_SELLER_TOKEN", url),
+        agent_type="sales",
+        tools=entry.get("tools", []) or [],
+        status=health.get("status", "unknown") if isinstance(health, dict) else "unknown",
+        source="registry",
+        protocol=protocol,
+        member_slug=member.get("slug"),
+        member_name=member.get("display_name"),
+        description=entry.get("description"),
+    )
+
+
+async def _fetch_registry_listing(base_url: str) -> list[dict[str, Any]]:
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(f"{base_url}/agents")
+        resp.raise_for_status()
+        data = resp.json()
+    entries = data if isinstance(data, list) else data.get("agents", [])
+    if not isinstance(entries, list):
+        raise TypeError(f"unexpected registry payload from {base_url}")
+    return [e for e in entries if isinstance(e, dict)]
+
+
 async def fetch_registry_agents() -> list[SellerAgent]:
-    """Fetch seller agents from the AdCP public registry.
-
-    Calls GET /api/registry/agents and filters for sales-type agents.
-    """
-    agents: list[SellerAgent] = []
-
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(f"{settings.registry_url}/agents")
-            resp.raise_for_status()
-            data = resp.json()
-
-            for agent in data if isinstance(data, list) else data.get("agents", []):
-                agent_type = agent.get("type", "unknown")
-                if agent_type not in ("sales", "unknown"):
-                    continue
-
-                url = agent.get("url") or agent.get("mcp_endpoint") or ""
-                if not url:
-                    continue
-
-                agents.append(
-                    SellerAgent(
-                        name=agent.get("name", "Unknown"),
-                        url=url,
-                        agent_type=agent_type,
-                        tools=agent.get("tools", []),
-                        status=agent.get("health", {}).get("status", "unknown")
-                        if isinstance(agent.get("health"), dict)
-                        else "unknown",
-                        source="registry",
-                    )
-                )
-
-            logger.info(f"Discovered {len(agents)} seller agents from registry")
-
-    except Exception as e:
-        logger.warning(f"Failed to fetch registry agents: {e}")
-
-    return agents
+    """Fetch sales agents from the AdCP registry (primary, then fallback)."""
+    for base_url in registry_base_urls():
+        try:
+            entries = await _fetch_registry_listing(base_url)
+        except (httpx.HTTPError, ValueError, TypeError) as e:
+            logger.warning("Registry %s unavailable: %s", base_url, e)
+            continue
+        agents = [a for a in (parse_registry_entry(e) for e in entries) if a is not None]
+        logger.info(f"Discovered {len(agents)} sales agents from registry {base_url}")
+        return agents
+    logger.warning("No AdCP registry reachable; using configured sellers only")
+    return []
 
 
 def get_configured_sellers() -> list[SellerAgent]:
@@ -155,13 +222,33 @@ def get_configured_sellers() -> list[SellerAgent]:
         SellerAgent(
             name=s.name,
             url=s.url,
-            token=s.token,
+            token=s.token or seller_env("NXFLO_SELLER_TOKEN", s.url),
             source="config",
             status="unknown",
         )
         for s in DEFAULT_SELLERS
         if s.enabled
     ]
+
+
+def _apply_capabilities(agent: SellerAgent, caps: dict[str, Any]) -> None:
+    agent.capabilities = caps
+    adcp_info = caps.get("adcp", {})
+    agent.adcp_versions = adcp_info.get("major_versions", []) if isinstance(adcp_info, dict) else []
+    agent.supported_protocols = caps.get("supported_protocols", [])
+    agent.extensions_supported = caps.get("extensions_supported", [])
+    media_buy = caps.get("media_buy", {})
+    if isinstance(media_buy, dict) and media_buy:
+        agent.portfolio = media_buy.get("portfolio", {})
+    if agent.supported_protocols:
+        if "media_buy" in agent.supported_protocols:
+            agent.agent_type = "sales"
+        elif "signals" in agent.supported_protocols:
+            agent.agent_type = "signals"
+    logger.info(
+        f"  {agent.name} capabilities: protocols={agent.supported_protocols}, "
+        f"extensions={agent.extensions_supported}"
+    )
 
 
 async def probe_seller(agent: SellerAgent) -> SellerAgent:
@@ -172,8 +259,13 @@ async def probe_seller(agent: SellerAgent) -> SellerAgent:
     2. If get_adcp_capabilities is available, call it for rich discovery
     3. Optionally fetch server card from well-known URL
     4. Classify agent type based on capabilities or tools
+    5. Derive the account mode / operator credential for this seller
     """
-    from src.connections.seller import connect_to_seller, get_adcp_capabilities_tool
+    from src.connections.seller import (
+        SellerError,
+        connect_to_seller,
+        get_adcp_capabilities_tool,
+    )
 
     try:
         async with connect_to_seller(agent) as client:
@@ -190,7 +282,7 @@ async def probe_seller(agent: SellerAgent) -> SellerAgent:
             elif CREATIVE_TOOLS & tool_set:
                 agent.agent_type = "creative"
 
-    except Exception as e:
+    except SellerError as e:
         agent.status = "error"
         logger.debug(f"Probe failed for {agent.name}: {e}")
         return agent
@@ -198,48 +290,27 @@ async def probe_seller(agent: SellerAgent) -> SellerAgent:
     # If get_adcp_capabilities is available, call it for rich discovery
     if "get_adcp_capabilities" in agent.tools:
         try:
-            caps = await get_adcp_capabilities_tool(agent)
-            agent.capabilities = caps
-
-            # Extract structured fields
-            adcp_info = caps.get("adcp", {})
-            agent.adcp_versions = adcp_info.get("major_versions", [])
-            agent.supported_protocols = caps.get("supported_protocols", [])
-            agent.extensions_supported = caps.get("extensions_supported", [])
-
-            # Extract media buy portfolio if present
-            media_buy = caps.get("media_buy", {})
-            if media_buy:
-                agent.portfolio = media_buy.get("portfolio", {})
-
-            # Re-classify based on capabilities
-            if agent.supported_protocols:
-                if "media_buy" in agent.supported_protocols:
-                    agent.agent_type = "sales"
-                elif "signals" in agent.supported_protocols:
-                    agent.agent_type = "signals"
-
-            logger.info(
-                f"  {agent.name} capabilities: protocols={agent.supported_protocols}, "
-                f"extensions={agent.extensions_supported}"
-            )
-
-        except Exception as e:
+            _apply_capabilities(agent, await get_adcp_capabilities_tool(agent))
+        except SellerError as e:
             logger.debug(f"get_adcp_capabilities failed for {agent.name}: {e}")
 
-    # Try fetching server card (non-blocking, best-effort)
-    try:
-        card = await fetch_server_card(agent.url)
-        if card:
-            agent.server_card = card
-            adcp_meta = _extract_adcp_meta(card)
-            if adcp_meta and not agent.supported_protocols:
-                agent.supported_protocols = adcp_meta.get("protocols_supported", [])
-                agent.extensions_supported = adcp_meta.get("extensions_supported", [])
-    except Exception:
-        pass
+    agent.apply_account_config()
+
+    # Try fetching server card (best-effort)
+    card = await fetch_server_card(agent.url)
+    if card:
+        agent.server_card = card
+        adcp_meta = _extract_adcp_meta(card)
+        if adcp_meta and not agent.supported_protocols:
+            agent.supported_protocols = adcp_meta.get("protocols_supported", [])
+            agent.extensions_supported = adcp_meta.get("extensions_supported", [])
 
     return agent
+
+
+def _normalize_url(url: str) -> str:
+    """Normalize URLs for dedup: strip trailing slash and /mcp suffix."""
+    return url.rstrip("/").removesuffix("/mcp").lower()
 
 
 async def discover_all_sellers(probe: bool = False) -> list[SellerAgent]:
@@ -251,13 +322,6 @@ async def discover_all_sellers(probe: bool = False) -> list[SellerAgent]:
     If probe=True, connects to each seller to discover tools and status.
     """
     sellers = get_configured_sellers()
-    # Normalize URLs for dedup: strip trailing slash and /mcp suffix
-    def _normalize_url(url: str) -> str:
-        url = url.rstrip("/")
-        if url.endswith("/mcp"):
-            url = url[:-4]
-        return url.lower()
-
     known_urls = {_normalize_url(s.url) for s in sellers}
 
     registry_agents = await fetch_registry_agents()
@@ -274,6 +338,8 @@ async def discover_all_sellers(probe: bool = False) -> list[SellerAgent]:
         sales = sum(1 for s in sellers if s.can_sell)
         logger.info(f"Probed {len(sellers)} sellers: {online} online, {sales} can sell")
     else:
+        for s in sellers:
+            s.apply_account_config()
         logger.info(
             f"Total sellers: {len(sellers)} ({sum(1 for s in sellers if s.token)} with auth)"
         )

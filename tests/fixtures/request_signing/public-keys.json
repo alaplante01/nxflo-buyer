@@ -1,0 +1,30 @@
+{
+  "$comment": "Public halves of the AdCP request-signing conformance test keys (https://adcontextprotocol.org/compliance/latest/test-vectors/request-signing/keys.json). Private material intentionally omitted.",
+  "keys": [
+    {
+      "kid": "test-ed25519-2026",
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "alg": "EdDSA",
+      "use": "sig",
+      "key_ops": [
+        "verify"
+      ],
+      "adcp_use": "request-signing",
+      "x": "gWUqzATUcUco5Q8fZZXn8aWwb7DQbYGBiqUzLiSDDJo"
+    },
+    {
+      "kid": "test-es256-2026",
+      "kty": "EC",
+      "crv": "P-256",
+      "alg": "ES256",
+      "use": "sig",
+      "key_ops": [
+        "verify"
+      ],
+      "adcp_use": "request-signing",
+      "x": "vGSQmjzPN1txgDY-oBb108gMsRETA9J5IPxqlBczQOY",
+      "y": "JGIbsHoOnHLL_LFqGYUW43BYDAqGYrNRZUylkE7rqSU"
+    }
+  ]
+}

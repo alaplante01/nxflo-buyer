@@ -18,6 +18,7 @@ import logging
 import time
 from enum import Enum
 
+from src.connections.errors import SellerError
 from src.metrics import circuit_breaker_state
 
 logger = logging.getLogger(__name__)
@@ -29,10 +30,12 @@ class CircuitState(str, Enum):
     HALF_OPEN = "half_open"
 
 
-class CircuitOpenError(Exception):
+class CircuitOpenError(SellerError):
     """Raised when a call is rejected because the circuit is open."""
 
-    def __init__(self, seller_name: str, remaining_seconds: float):
+    recovery = "terminal"  # fail fast; never retried inside one operation
+
+    def __init__(self, seller_name: str, remaining_seconds: float) -> None:
         self.seller_name = seller_name
         self.remaining_seconds = remaining_seconds
         super().__init__(
@@ -52,7 +55,7 @@ class CircuitBreaker:
         seller_url: str = "",
         failure_threshold: int = 5,
         recovery_timeout: float = 60.0,
-    ):
+    ) -> None:
         self._seller_url = seller_url
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
@@ -65,9 +68,11 @@ class CircuitBreaker:
 
     @property
     def state(self) -> CircuitState:
-        if self._state == CircuitState.OPEN:
-            if time.monotonic() - self._last_failure_time >= self.recovery_timeout:
-                self._state = CircuitState.HALF_OPEN
+        if (
+            self._state == CircuitState.OPEN
+            and time.monotonic() - self._last_failure_time >= self.recovery_timeout
+        ):
+            self._state = CircuitState.HALF_OPEN
         return self._state
 
     def _update_gauge(self) -> None:
@@ -118,7 +123,7 @@ class CircuitBreakerRegistry:
         self,
         failure_threshold: int = 5,
         recovery_timeout: float = 60.0,
-    ):
+    ) -> None:
         self._breakers: dict[str, CircuitBreaker] = {}
         self._failure_threshold = failure_threshold
         self._recovery_timeout = recovery_timeout

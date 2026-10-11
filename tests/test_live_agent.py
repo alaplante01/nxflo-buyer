@@ -1,20 +1,35 @@
 """Live integration test against the AdCP test agent.
 
-This connects to the real test agent at adcontextprotocol.org.
-Run with: .venv/Scripts/python -m pytest tests/test_live_agent.py -v -s
+This connects to the real test agent at adcontextprotocol.org (read-only calls).
+The agent's bearer token is read from NXFLO_SELLER_TOKEN_ADCP_TEST (the public
+shared test token from the AdCP docs); tests that call the agent are skipped
+when it is unset. Run with:
+    NXFLO_SELLER_TOKEN_ADCP_TEST=... .venv/bin/python -m pytest tests/test_live_agent.py -v -s
 """
 
 import asyncio
+import os
 import sys
 
-from src.discovery.registry import SellerAgent, discover_all_sellers, fetch_registry_agents
-from src.connections.seller import get_seller_capabilities, get_seller_products, call_seller_tool
+import pytest
 
+from src.connections.seller import (
+    SellerError,
+    call_seller_tool,
+    get_seller_capabilities,
+    get_seller_products,
+)
+from src.discovery.registry import SellerAgent, discover_all_sellers, fetch_registry_agents
+
+TEST_TOKEN = os.environ.get("NXFLO_SELLER_TOKEN_ADCP_TEST")
+requires_token = pytest.mark.skipif(
+    not TEST_TOKEN, reason="NXFLO_SELLER_TOKEN_ADCP_TEST not set (live test agent token)"
+)
 
 TEST_AGENT = SellerAgent(
     name="AdCP Test Agent",
     url="https://test-agent.adcontextprotocol.org/mcp",
-    token="1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ",
+    token=TEST_TOKEN,
     source="config",
 )
 
@@ -37,6 +52,7 @@ async def test_discover_all():
     assert len(sellers) >= 1, "Should have at least the test agent"
 
 
+@requires_token
 async def test_get_capabilities():
     """Test getting capabilities from the test agent."""
     caps = await get_seller_capabilities(TEST_AGENT)
@@ -44,6 +60,7 @@ async def test_get_capabilities():
     assert caps, "Should return capabilities"
 
 
+@requires_token
 async def test_get_products():
     """Test getting products from the test agent."""
     products = await get_seller_products(
@@ -61,6 +78,7 @@ async def test_get_products():
             print(f"  - {p.get('name', 'unnamed')}: {p.get('product_id', 'no-id')}")
 
 
+@requires_token
 async def test_list_creative_formats():
     """Test listing creative formats from the test agent."""
     formats = await call_seller_tool(TEST_AGENT, "list_creative_formats", {})
@@ -88,9 +106,9 @@ async def main():
         print(f"\n--- {name} ---")
         try:
             await test_fn()
-            print(f"  PASS")
+            print("  PASS")
             passed += 1
-        except Exception as e:
+        except (AssertionError, SellerError) as e:
             print(f"  FAIL: {e}")
             failed += 1
 

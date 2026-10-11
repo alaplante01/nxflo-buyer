@@ -10,6 +10,8 @@ Reference: https://docs.adcontextprotocol.org/docs/building/integration/mcp-guid
 import logging
 from typing import Any
 
+from src.connections import retry
+from src.connections.errors import SellerError
 from src.discovery.registry import SellerAgent
 
 logger = logging.getLogger(__name__)
@@ -22,7 +24,7 @@ class SellerSession:
     context, and tracks async task_ids for reconciliation.
     """
 
-    def __init__(self, agent: SellerAgent):
+    def __init__(self, agent: SellerAgent) -> None:
         self.agent = agent
         self.context_id: str | None = None
         self.active_tasks: dict[str, dict[str, Any]] = {}  # task_id -> metadata
@@ -33,6 +35,7 @@ class SellerSession:
         params: dict[str, Any],
         context: dict[str, Any] | None = None,
         push_notification_config: dict[str, Any] | None = None,
+        budget: retry.RetryBudget | None = None,
     ) -> dict[str, Any]:
         """Call a tool on the seller with automatic context management.
 
@@ -55,7 +58,7 @@ class SellerSession:
             full_params["push_notification_config"] = push_notification_config
 
         # Make the MCP call
-        response = await self._call_raw(tool, full_params)
+        response = await self._call_raw(tool, full_params, budget)
 
         # Extract and save context_id
         if "context_id" in response:
@@ -78,26 +81,32 @@ class SellerSession:
     ) -> dict[str, Any]:
         """Call with context expiration handling.
 
-        If the seller indicates the context is expired/not found,
-        resets context_id and retries once.
+        If the seller indicates the context is expired/not found, resets context_id
+        and retries once. That retry consumes the same per-operation retry budget as
+        transient-error retries inside call_seller_tool.
         """
+        budget = retry.RetryBudget.from_settings()
         try:
-            return await self.call(tool, params, **kwargs)
-        except Exception as e:
+            return await self.call(tool, params, budget=budget, **kwargs)
+        except SellerError as e:
             error_msg = str(e).lower()
-            if "context" in error_msg and ("not found" in error_msg or "expired" in error_msg):
-                logger.info(f"Context expired for {self.agent.name}, resetting and retrying")
-                self.reset()
-                return await self.call(tool, params, **kwargs)
-            raise
+            expired = "context" in error_msg and ("not found" in error_msg or "expired" in error_msg)
+            if not expired or budget.exhausted:
+                raise
+            budget.retries_attempted += 1
+            logger.info(f"Context expired for {self.agent.name}, resetting and retrying")
+            self.reset()
+            return await self.call(tool, params, budget=budget, **kwargs)
 
-    async def _call_raw(self, tool: str, params: dict[str, Any]) -> dict[str, Any]:
+    async def _call_raw(
+        self, tool: str, params: dict[str, Any], budget: retry.RetryBudget | None = None
+    ) -> dict[str, Any]:
         """Delegate to call_seller_tool for consistent circuit breaking and metrics."""
         from src.connections.seller import call_seller_tool
 
-        return await call_seller_tool(self.agent, tool, params)
+        return await call_seller_tool(self.agent, tool, params, budget=budget)
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset the session — clear context_id and active tasks."""
         self.context_id = None
         self.active_tasks.clear()

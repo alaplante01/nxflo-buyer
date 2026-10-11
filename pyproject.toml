@@ -4,10 +4,13 @@ version = "0.1.0"
 description = "Nexflo Buyer — AdCP buying agent that discovers and purchases ad inventory from seller agents"
 requires-python = ">=3.11"
 dependencies = [
-    "fastmcp>=2.14.0",
+    "fastmcp>=4.1.0",
+    "httpx2>=2.13.0",  # fastmcp 4.x transport HTTP client (request-signing auth hook)
     "fastapi>=0.115.0",
     "uvicorn>=0.34.0",
     "httpx>=0.28.0",
+    "cryptography>=42.0.0",  # RFC 9421 request signing (Ed25519 / ECDSA P-256)
+    "idna>=3.6",  # UTS-46 host canonicalization (AdCP URL canonicalization)
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
     "aiosqlite>=0.20.0",

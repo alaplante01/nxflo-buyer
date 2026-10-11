@@ -11,10 +11,11 @@ import logging
 from collections.abc import Callable
 
 from src.buying.tracker import (
+    TERMINAL_STATUSES,
     OperationTracker,
     TrackedOperation,
-    TERMINAL_STATUSES,
 )
+from src.connections.retry import RetryBudget
 from src.connections.seller import tasks_get
 from src.discovery.registry import SellerAgent
 
@@ -100,15 +101,18 @@ class BackgroundPoller:
                     if op.status in TERMINAL_STATUSES:
                         poll_timestamps.pop(op.id, None)
 
-            except Exception as e:
-                logger.error(f"Poller error: {e}")
+            except Exception:
+                logger.exception("Poller error")
 
             await asyncio.sleep(5)
 
     async def _poll_single(self, op: TrackedOperation, seller: SellerAgent):
         """Poll a single operation and update tracker."""
         try:
-            response = await tasks_get(seller, task_id=op.task_id, include_result=True)
+            # One attempt per tick: the next scheduled poll is the retry.
+            response = await tasks_get(
+                seller, task_id=op.task_id, include_result=True, budget=RetryBudget(max_retries=0)
+            )
             self.tracker.update_from_response(op.id, response)
             op.poll_count += 1
             await self.tracker._persist(op)
@@ -119,7 +123,7 @@ class BackgroundPoller:
                     f"(polled {op.poll_count} times)"
                 )
         except Exception as e:
-            logger.warning(f"Failed to poll operation {op.id}: {e}")
+            logger.warning(f"Failed to poll operation {op.id}: {e}", exc_info=True)
 
     def _find_seller(self, op: TrackedOperation) -> SellerAgent | None:
         """Find the seller agent for an operation by URL (always uses fresh list)."""

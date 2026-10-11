@@ -2,6 +2,11 @@
 
 Discovers AdCP seller agents and buys inventory on behalf of advertisers.
 
+Also serves this buyer's own AdCP surface:
+- POST /mcp                    MCP endpoint answering get_adcp_capabilities
+                               (public URL = NXFLO_AGENT_URL)
+- GET  /.well-known/jwks.json  request-signing public keys (RFC 9421 verifiers)
+
 Usage:
     python -m src.main
     # or
@@ -9,11 +14,14 @@ Usage:
 """
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from src.agent_server.mcp import create_agent_mcp
 from src.api import routes
 from src.api.publishers import router as publishers_router
 from src.buying.orchestrator import BuyingOrchestrator
@@ -21,23 +29,42 @@ from src.buying.poller import BackgroundPoller
 from src.config import settings
 from src.logging_config import setup_logging
 from src.middleware import CorrelationIdMiddleware, RateLimitMiddleware
-from src.webhooks.receiver import router as webhook_router, set_tracker
+from src.signing.keys import build_jwks, load_signing_key_from_settings
+from src.webhooks.receiver import router as webhook_router
+from src.webhooks.receiver import set_tracker
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
+agent_mcp_app = create_agent_mcp().http_app(path="/mcp", stateless_http=True, json_response=True)
+
+
+def _check_signing_config() -> None:
+    """Fail fast when signing is enabled without usable key material."""
+    if not settings.signing_enabled:
+        return
+    key = load_signing_key_from_settings()
+    if key is None:
+        raise RuntimeError(
+            "NXFLO_SIGNING_ENABLED=true but no key configured "
+            "(NXFLO_SIGNING_PRIVATE_KEY_PATH or NXFLO_SIGNING_PRIVATE_KEY)"
+        )
+    logger.info(f"Request signing enabled with kid={key.kid} alg={key.alg}")
+
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialize the orchestrator on startup, discover sellers."""
     logger.info("Nexflo Buyer starting...")
+    _check_signing_config()
 
     # Create and initialize orchestrator
     orch = BuyingOrchestrator()
     routes.orchestrator = orch
 
-    # Initialize SQLite database
+    # Initialize database (migrations) and load persisted state
     await orch.tracker.init_db()
+    await orch.accounts.init_db()
 
     # Set tracker reference for webhook receiver
     set_tracker(orch.tracker)
@@ -52,7 +79,7 @@ async def lifespan(app: FastAPI):
         protocols_tag = f"protocols={s.supported_protocols}" if s.supported_protocols else ""
         logger.info(
             f"  - {s.name} [{status_tag}] [{auth_tag}] [{tools_tag}] "
-            f"{protocols_tag} {s.url}"
+            f"[accounts={s.account_mode.value}] {protocols_tag} {s.url}"
         )
     sales = [s for s in sellers if s.can_sell]
     logger.info(f"  {len(sales)} sellers can sell, {len(sellers) - len(sales)} other agents")
@@ -69,7 +96,9 @@ async def lifespan(app: FastAPI):
     poller = BackgroundPoller(orch.tracker, lambda: orch.sellers)
     await poller.start()
 
-    yield
+    # The mounted MCP app needs its own lifespan (session manager task group)
+    async with agent_mcp_app.lifespan(app):
+        yield
 
     # Shutdown
     await poller.stop()
@@ -79,7 +108,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Nexflo Buyer",
     description="AdCP buying agent that discovers seller agents and purchases inventory",
-    version="0.3.0",
+    version="0.5.0",
     lifespan=lifespan,
 )
 
@@ -91,11 +120,26 @@ app.include_router(publishers_router)
 
 
 @app.get("/metrics", include_in_schema=False)
-async def metrics():
+async def metrics() -> PlainTextResponse:
     """Prometheus metrics endpoint."""
-    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-
     return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/.well-known/jwks.json", include_in_schema=False)
+async def jwks() -> JSONResponse:
+    """Public request-signing keys (adcp_use: request-signing); empty when unconfigured.
+
+    Keys are published whenever key material is configured, even before
+    NXFLO_SIGNING_ENABLED flips, so verifiers can cache a new key ahead of use.
+    """
+    return JSONResponse(
+        build_jwks(load_signing_key_from_settings()),
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+# Mounted last so every route above takes precedence; serves POST/DELETE /mcp only.
+app.mount("/", agent_mcp_app)
 
 
 if __name__ == "__main__":

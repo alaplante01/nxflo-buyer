@@ -113,11 +113,11 @@ async def _verify_auth(request: Request, body: bytes, operation_id: str):
 
 async def _check_idempotency(event_id: str, task_id: str, operation_id: str, status: str, timestamp: str) -> bool:
     """Check if this webhook event was already processed. Records it if new."""
-    from src.models.schema import async_session, WebhookEventRecord
+    from src.models.schema import WebhookEventRecord, async_session
 
     ts = utcnow()
     try:
-        ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).replace(tzinfo=None)
+        ts = datetime.fromisoformat(timestamp).replace(tzinfo=None)
     except (ValueError, TypeError):
         pass
 
@@ -178,11 +178,11 @@ async def receive_webhook(
     try:
         payload = WebhookPayload.model_validate_json(body)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid payload: {e}") from e
 
     # 3. Check timestamp freshness (replay protection)
     try:
-        ts = datetime.fromisoformat(payload.timestamp.replace("Z", "+00:00"))
+        ts = datetime.fromisoformat(payload.timestamp)
         if abs((datetime.now(UTC) - ts).total_seconds()) > 300:
             raise HTTPException(status_code=400, detail="Timestamp too old")
     except (ValueError, TypeError):
@@ -240,8 +240,8 @@ async def receive_reporting_webhook(
 
     try:
         payload = json.loads(body)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}") from e
 
     # Idempotency: deduplicate by report_id or payload hash
     report_id = payload.get("report_id") or hashlib.sha256(body).hexdigest()[:16]

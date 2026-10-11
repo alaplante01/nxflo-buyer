@@ -1,16 +1,20 @@
 """Cross-seller product comparison test.
 
 Queries get_products across all accessible sellers and compares results.
-Run with: .venv/Scripts/python -m tests.test_cross_seller_products
+Run with: .venv/bin/python -m tests.test_cross_seller_products
 """
 
 import asyncio
 import json
-import sys
 import logging
 
+from src.connections.seller import (
+    SellerConnectionError,
+    SellerError,
+    get_seller_capabilities,
+    get_seller_products,
+)
 from src.discovery.registry import discover_all_sellers
-from src.connections.seller import get_seller_products, get_seller_capabilities, SellerConnectionError
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -31,7 +35,7 @@ async def query_products(agent):
         return {"status": "ok", "response": products}
     except SellerConnectionError as e:
         return {"status": "connection_error", "error": str(e)}
-    except Exception as e:
+    except SellerError as e:
         return {"status": "error", "error": f"{type(e).__name__}: {e}"}
 
 

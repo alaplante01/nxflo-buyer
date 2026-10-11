@@ -67,7 +67,7 @@ def _to_response(pub: PublisherRecord) -> PublisherResponse:
 @router.post("", response_model=PublisherResponse, status_code=201)
 async def register_publisher(req: PublisherCreateRequest):
     """Register a new publisher and return their site_id + install snippet."""
-    domain = req.domain.lower().strip().lstrip("www.")
+    domain = req.domain.lower().strip().removeprefix("www.")
 
     pub = PublisherRecord(
         id=_generate_id("pub"),
@@ -120,7 +120,7 @@ async def get_publisher(site_id: str):
 @router.get("/by-domain/{domain}", response_model=PublisherResponse)
 async def get_publisher_by_domain(domain: str):
     """Look up a publisher by domain. Used by PBS to validate account IDs."""
-    domain = domain.lower().strip().lstrip("www.")
+    domain = domain.lower().strip().removeprefix("www.")
     async with async_session() as session:
         result = await session.execute(
             select(PublisherRecord).where(PublisherRecord.domain == domain)

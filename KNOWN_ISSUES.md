@@ -7,8 +7,10 @@ Tracked issues and limitations as of 2026-02-10 (v0.4.0).
 ### H1: No authentication on API endpoints
 **Severity**: HIGH | **Effort**: Medium
 
-The REST API (`/buy`, `/operations`, `/media-buy/*`, etc.) has no authentication.
-Anyone who can reach the service can trigger purchases.
+The REST API (`/buy`, `/operations`, `/media-buy/*`, `/accounts/*`, etc.) has no
+authentication. Anyone who can reach the service can trigger purchases or seller
+account provisioning (`POST /accounts/sync`). The `/mcp` endpoint is intentionally
+public (it serves only the read-only `get_adcp_capabilities`).
 
 **Recommendation**: Add API key or JWT middleware. At minimum, require a
 `NXFLO_API_KEY` env var and check `Authorization: Bearer <key>` on all
@@ -152,7 +154,10 @@ cause memory issues. Should add a middleware or reverse proxy limit.
 item. If a seller returns multiple content items or non-JSON text, only the
 first is used. Structured content fallback exists but isn't well-tested.
 
-### L8: No retry budget / backoff on poller failures
+### L8: No backoff on poller failures (per-call retries are now bounded)
+Seller calls now use a bounded retry budget (<= 3 retries / 300 s, see
+`src/connections/retry.py`); the poller itself still polls on a fixed cadence.
+
 The `BackgroundPoller` retries forever with no backoff. If a seller returns
 transient errors, the poller hammers it every 5/60 seconds indefinitely.
 Should implement exponential backoff per-operation.

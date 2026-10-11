@@ -14,9 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-from src.utils import utcnow
-
 from src.metrics import operations_created_total, operations_current
+from src.utils import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +88,9 @@ class OperationTracker:
 
     async def init_db(self):
         """Initialize database tables and load existing operations."""
-        from src.models.schema import init_db, async_session, OperationRecord
         from sqlalchemy import select
+
+        from src.models.schema import OperationRecord, async_session, init_db
 
         await init_db()
         self._db_enabled = True
@@ -134,7 +134,7 @@ class OperationTracker:
         if not self._db_enabled:
             return
 
-        from src.models.schema import async_session, OperationRecord
+        from src.models.schema import OperationRecord, async_session
 
         async with async_session() as session:
             existing = await session.get(OperationRecord, op.id)
@@ -143,6 +143,7 @@ class OperationTracker:
                 existing.task_id = op.task_id
                 existing.context_id = op.context_id
                 existing.media_buy_id = op.media_buy_id
+                existing.request_data = op.request_data
                 existing.response_data = op.response_data
                 existing.error = op.error
                 existing.poll_count = op.poll_count

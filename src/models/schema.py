@@ -1,6 +1,6 @@
 """SQLAlchemy models for persisting buying agent state."""
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, JSON
+from sqlalchemy import JSON, Column, DateTime, Integer, String, Text
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -90,6 +90,25 @@ class WebhookEventRecord(Base):
     raw_payload = Column(JSON, default=dict)
 
 
+class SellerAccountRecord(Base):
+    """An advertiser account known on a seller agent (AdCP 3.2 Accounts Protocol)."""
+
+    __tablename__ = "seller_accounts"
+
+    seller_url = Column(String, primary_key=True)
+    account_key = Column(String, primary_key=True)  # natural-key JSON or "id:<account_id>"
+    account_id = Column(String, nullable=True)
+    name = Column(String, nullable=True)
+    brand = Column(JSON, nullable=True)
+    operator = Column(String, nullable=True)
+    sandbox = Column(Integer, default=0)
+    status = Column(String, nullable=True)
+    billing = Column(String, nullable=True)
+    account_mode = Column(String, nullable=True)
+    raw = Column(JSON, default=dict)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 # Engine and session factory
 _is_sqlite = settings.database_url.startswith("sqlite")
 _engine_kwargs: dict = {"echo": False}
@@ -115,8 +134,10 @@ async def init_db():
     thread so it gets its own event loop.
     """
     import asyncio
-    from alembic import command
+
     from alembic.config import Config
+
+    from alembic import command
 
     def _run_migrations():
         alembic_cfg = Config("alembic.ini")

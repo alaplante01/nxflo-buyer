@@ -4,7 +4,7 @@ Tracks HTTP request latency, seller call latency, operation lifecycle,
 and circuit breaker state.
 """
 
-from prometheus_client import Counter, Histogram, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 # --- HTTP ---
 

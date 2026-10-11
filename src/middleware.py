@@ -9,7 +9,7 @@ import time
 from collections import defaultdict
 
 from src.logging_config import correlation_id, new_correlation_id
-from src.metrics import http_requests_total, http_request_duration_seconds
+from src.metrics import http_request_duration_seconds, http_requests_total
 
 logger = logging.getLogger(__name__)
 

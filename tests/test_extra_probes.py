@@ -3,8 +3,8 @@
 import asyncio
 import json
 
+from src.connections.seller import SellerError, call_seller_tool, connect_to_seller
 from src.discovery.registry import SellerAgent
-from src.connections.seller import connect_to_seller, call_seller_tool
 
 
 async def main():
@@ -14,7 +14,7 @@ async def main():
         async with connect_to_seller(ci) as client:
             tools = await client.list_tools()
             print(f"Content Ignite /mcp: {len(tools)} tools - {[t.name for t in tools]}")
-    except Exception as e:
+    except SellerError as e:
         print(f"Content Ignite /mcp: FAIL - {e}")
 
     # Test Dstillery signals
@@ -22,7 +22,7 @@ async def main():
     try:
         result = await call_seller_tool(dst, "get_signals", {"brief": "sports enthusiasts athletic footwear"})
         print(f"Dstillery signals: {json.dumps(result, indent=2)[:500]}")
-    except Exception as e:
+    except SellerError as e:
         print(f"Dstillery signals: FAIL - {e}")
 
     # Test Bidcliq get_adcp_capabilities (it has this tool)
@@ -30,7 +30,7 @@ async def main():
     try:
         result = await call_seller_tool(bc, "get_adcp_capabilities", {})
         print(f"Bidcliq capabilities: {json.dumps(result, indent=2)[:500]}")
-    except Exception as e:
+    except SellerError as e:
         print(f"Bidcliq capabilities: FAIL - {e}")
 
 

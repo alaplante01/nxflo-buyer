@@ -1,13 +1,19 @@
-"""List all tools available on the test agent."""
+"""List all tools available on the test agent.
+
+Reads the bearer token from NXFLO_SELLER_TOKEN_ADCP_TEST (never hardcoded).
+"""
 
 import asyncio
+import os
+
 from fastmcp.client import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
 
 async def main():
     url = "https://test-agent.adcontextprotocol.org/mcp"
-    headers = {"Authorization": "Bearer 1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ"}
+    token = os.environ.get("NXFLO_SELLER_TOKEN_ADCP_TEST", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     transport = StreamableHttpTransport(url=url, headers=headers)
     client = Client(transport=transport)
 
