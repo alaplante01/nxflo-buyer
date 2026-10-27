@@ -22,7 +22,7 @@ async def main():
     print("1. DB initialized OK")
 
     # Create an operation
-    op = tracker.create(
+    op = await tracker.create(
         operation_type="create_media_buy",
         seller_name="Test Seller",
         seller_url="https://test.example.com/mcp",

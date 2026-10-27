@@ -1,17 +1,59 @@
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+venv/
 dist/
 build/
-*.db
-.env
-.claude/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
-# Terraform
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.jwk
+*.p12
+*.pfx
+signing-key*
+
+# Databases (SQLite is the local default: nxflo.db)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Data and model artifacts
+data/
+*.parquet
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+
+# Terraform: real variable files and state hold resource IDs and can hold secrets
+*.tfvars
+!*.tfvars.example
+*.tfstate
+*.tfstate.*
+.terraform/
 deploy/terraform/.terraform/
 deploy/terraform/terraform.tfstate*
 deploy/terraform/tfplan
+deploy/terraform/*.tfplan
 deploy/terraform/.terraform.lock.hcl
 
 # AWS infrastructure config artifacts
@@ -22,3 +64,10 @@ publisher/s3-bucket-policy.json
 
 # Build artifacts
 publisher/nexflo-ads.zip
+node_modules/
+
+# Tooling and OS
+.claude/
+.idea/
+.vscode/
+.DS_Store

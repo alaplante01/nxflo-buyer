@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src/ tests/
+
+      # The live tests (tests/test_live_agent.py) call public AdCP agents and are
+      # skipped here; run them locally with NXFLO_SELLER_TOKEN_ADCP_TEST set.
+      - name: Test
+        run: python -m pytest -q --ignore=tests/test_live_agent.py

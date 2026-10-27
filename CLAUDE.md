@@ -135,6 +135,8 @@ Per-seller variables (`<SLUG>` = seller host upper-cased, non-alphanumerics → 
 
 ## Related Repos
 
-- `adcp/` — AdCP protocol specification + server
-- `nxflo-dsp/` — RTB DSP (execution engine behind seller agent)
-- `nxflo-seller/` — Prebid Sales Agent (seller side)
+Sibling checkouts in the same parent directory as this repo:
+
+- `../adcp/` — AdCP protocol specification + server
+- `../nxflo-dsp/` — RTB DSP (execution engine behind seller agent)
+- `../nxflo-seller/` — Prebid Sales Agent (seller side)

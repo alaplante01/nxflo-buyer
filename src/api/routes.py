@@ -65,7 +65,7 @@ class BuyRequest(BaseModel):
     budget: float = Field(..., gt=0, description="Budget in USD")
     brand_name: str = Field(default="Nexflo")
     brand_url: str = Field(default="https://nexflo.ai")
-    buyer_ref: str | None = Field(default=None, description="Idempotency key")
+    buyer_ref: str | None = Field(default=None, description="Correlation reference, sent as context.buyer_ref; not an idempotency key")
     end_time: str | None = Field(default=None, description="Campaign end (ISO 8601)")
     product_index: int = Field(default=0, description="Which ranked product to buy (0 = best)")
     # Advanced options

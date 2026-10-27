@@ -1,6 +1,6 @@
 # Known Issues
 
-Tracked issues and limitations as of 2026-02-10 (v0.4.0).
+Tracked issues and limitations as of 2026-10-11 (v0.5.0).
 
 ## High Priority
 

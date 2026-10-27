@@ -2,7 +2,7 @@
 
 **Date:** 2026-02-25
 **Region:** us-east-1
-**Account:** <ACCOUNT_ID>
+**Account:** `<ACCOUNT_ID>` (AWS account and resource IDs in this file are placeholders)
 **Purpose:** Full config capture before parking all infrastructure. Use this to spin everything back up.
 
 ---
@@ -19,17 +19,17 @@
 ### Subnets
 | Name | Subnet ID | CIDR | AZ |
 |------|-----------|------|----|
-| nxflo-buyer-public-a | `<SUBNET_ID>` | 10.1.1.0/24 | us-east-1a |
-| nxflo-buyer-public-b | `<SUBNET_ID>` | 10.1.2.0/24 | us-east-1b |
-| nxflo-buyer-private-a | `<SUBNET_ID>` | 10.1.10.0/24 | us-east-1a |
-| nxflo-buyer-private-b | `<SUBNET_ID>` | 10.1.11.0/24 | us-east-1b |
+| nxflo-buyer-public-a | `<SUBNET_PUBLIC_A>` | 10.1.1.0/24 | us-east-1a |
+| nxflo-buyer-public-b | `<SUBNET_PUBLIC_B>` | 10.1.2.0/24 | us-east-1b |
+| nxflo-buyer-private-a | `<SUBNET_PRIVATE_A>` | 10.1.10.0/24 | us-east-1a |
+| nxflo-buyer-private-b | `<SUBNET_PRIVATE_B>` | 10.1.11.0/24 | us-east-1b |
 
 ### NAT Gateway (TO BE DELETED)
 | Key | Value |
 |-----|-------|
-| NAT Gateway ID | `<NAT_ID>` |
-| Subnet | `<SUBNET_ID>` (public-a) |
-| Public IP | `<PUBLIC_IP>` |
+| NAT Gateway ID | `<NAT_GATEWAY_ID>` |
+| Subnet | `<SUBNET_PUBLIC_A>` (public-a) |
+| Public IP | `<NAT_PUBLIC_IP>` |
 | Elastic IP | `<EIP_ALLOCATION_ID>` |
 
 **To recreate:** Create NAT Gateway in public-a subnet, allocate new EIP, update private subnet route tables.
@@ -50,8 +50,8 @@
 | Master User | `nxflo_admin` |
 | Serverless v2 | Min 0.5 ACU, Max 4.0 ACU |
 | Subnet Group | `nxflo-db-subnets` |
-| Security Group | `<SG_ID>` (nxflo-db-sg) |
-| KMS Key | `cfd51f2d-5f06-4b88-a3f4-a058d603c175` |
+| Security Group | `<SG_DB>` (nxflo-db-sg) |
+| KMS Key | `<KMS_KEY_ID>` |
 | Deletion Protection | ON |
 | Backup Retention | 7 days |
 | Backup Window | 03:00-04:00 UTC |
@@ -90,12 +90,12 @@ All services are Fargate, in private subnets, behind ALBs.
 | CPU/Memory | 512 / 1024 |
 | Image | `<ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/nxflo-buyer:latest` |
 | Port | 8000 |
-| Security Group | `<SG_ID>` |
+| Security Group | `<SG_BUYER_TASK>` |
 | Subnets | private-a, private-b |
 | Log Group | `/ecs/nxflo-buyer` |
 | Env Vars | NXFLO_PORT=8000, NXFLO_HOST=0.0.0.0, NXFLO_WEBHOOK_BASE_URL=https://buyer.nexflo.ai |
 | Secrets | NXFLO_DATABASE_URL → `nxflo/buyer/database-url`, NXFLO_WEBHOOK_SECRET → `nxflo/buyer/webhook-secret` |
-| ALB | `nxflo-buyer-alb` → Target Group `nxflo-buyer-tg/6a4e1650fba0b996` |
+| ALB | `nxflo-buyer-alb` → Target Group `nxflo-buyer-tg/<TG_ID>` |
 
 ### nxflo-dsp
 | Key | Value |
@@ -106,12 +106,12 @@ All services are Fargate, in private subnets, behind ALBs.
 | CPU/Memory | 1024 / 2048 |
 | Image | `<ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/nxflo-dsp:rename-20260214` |
 | Port | 8080 |
-| Security Group | `<SG_ID>` |
+| Security Group | `<SG_DSP_TASK>` |
 | Subnets | private-a, private-b |
 | Log Group | `/ecs/nxflo-dsp` |
 | Env Vars | NXFLO_CONFIG_TABLE=nxflo-dsp-config, RUST_LOG=info, NXFLO_FIREHOSE_STREAM=nxflo-bid-events, MALLOC_ARENA_MAX=2 |
 | Secrets | NXFLO_WIN_SECRET → `nxflo/dsp/win-secret`, DATABASE_URL → `nxflo/dsp/database-url` |
-| ALB | `nxflo-dsp-alb` → Target Group `nxflo-dsp-tg/f029fcf5115463dd` |
+| ALB | `nxflo-dsp-alb` → Target Group `nxflo-dsp-tg/<TG_ID>` |
 
 ### nxflo-pbs
 | Key | Value |
@@ -122,12 +122,12 @@ All services are Fargate, in private subnets, behind ALBs.
 | CPU/Memory | 1024 / 2048 |
 | Image | `<ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/nxflo-pbs:latest` |
 | Port | 8000 |
-| Security Group | `<SG_ID>` |
+| Security Group | `<SG_PBS_TASK>` |
 | Subnets | private-a, private-b |
 | Log Group | `/ecs/nxflo-pbs` |
 | Env Vars | (none) |
 | Secrets | (none) |
-| ALB | `nxflo-pbs-alb` → Target Group `nxflo-pbs-tg/da55196aa22d4a63` |
+| ALB | `nxflo-pbs-alb` → Target Group `nxflo-pbs-tg/<TG_ID>` |
 
 ### nxflo-axe
 | Key | Value |
@@ -138,12 +138,12 @@ All services are Fargate, in private subnets, behind ALBs.
 | CPU/Memory | 512 / 1024 |
 | Image | `<ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/nxflo-axe:latest` |
 | Port | 8000 |
-| Security Group | `<SG_ID>` |
+| Security Group | `<SG_AXE_TASK>` |
 | Subnets | private-a, private-b |
 | Log Group | `/ecs/nxflo-axe` |
 | Env Vars | NXFLO_AXE_HOST=0.0.0.0, NXFLO_AXE_PORT=8000 |
 | Secrets | NXFLO_AXE_DATABASE_URL → `nxflo/axe/database-url` |
-| ALB | `nxflo-axe-alb` → Target Group `nxflo-axe-tg/d3d4c7a612410e56` |
+| ALB | `nxflo-axe-alb` → Target Group `nxflo-axe-tg/<TG_ID>` |
 
 ### nxflo-creative
 | Key | Value |
@@ -154,12 +154,12 @@ All services are Fargate, in private subnets, behind ALBs.
 | CPU/Memory | 512 / 1024 |
 | Image | `<ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/nxflo-creative:latest` |
 | Port | 8000 |
-| Security Group | `<SG_ID>` |
+| Security Group | `<SG_CREATIVE_TASK>` |
 | Subnets | private-a, private-b |
 | Log Group | `/ecs/nxflo-creative` |
 | Env Vars | NXFLO_CREATIVE_HOST=0.0.0.0, NXFLO_CREATIVE_PORT=8000 |
 | Secrets | NXFLO_CREATIVE_DATABASE_URL → `nxflo/creative/database-url` |
-| ALB | `nxflo-creative-alb` → Target Group `nxflo-creative-tg/80efbfc8e712b311` |
+| ALB | `nxflo-creative-alb` → Target Group `nxflo-creative-tg/<TG_ID>` |
 
 ### nxflo-signals
 | Key | Value |
@@ -170,12 +170,12 @@ All services are Fargate, in private subnets, behind ALBs.
 | CPU/Memory | 512 / 1024 |
 | Image | `<ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/nxflo-signals:latest` |
 | Port | 8000 |
-| Security Group | `<SG_ID>` |
+| Security Group | `<SG_SIGNALS_TASK>` |
 | Subnets | private-a, private-b |
 | Log Group | `/ecs/nxflo-signals` |
 | Env Vars | NXFLO_SIGNALS_HOST=0.0.0.0, NXFLO_SIGNALS_PORT=8000 |
 | Secrets | NXFLO_SIGNALS_DATABASE_URL → `nxflo/signals/database-url` |
-| ALB | `nxflo-signals-alb` → Target Group `nxflo-signals-tg/872bf51b2c8f9af1` |
+| ALB | `nxflo-signals-alb` → Target Group `nxflo-signals-tg/<TG_ID>` |
 
 ### nxflo-report
 | Key | Value |
@@ -186,12 +186,12 @@ All services are Fargate, in private subnets, behind ALBs.
 | CPU/Memory | 512 / 1024 |
 | Image | `<ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/nxflo-report:latest` |
 | Port | 8000 |
-| Security Group | `<SG_ID>` |
+| Security Group | `<SG_REPORT_TASK>` |
 | Subnets | private-a, private-b |
 | Log Group | `/ecs/nxflo-report` |
 | Env Vars | NXFLO_REPORT_HOST=0.0.0.0, NXFLO_REPORT_PORT=8000 |
 | Secrets | NXFLO_REPORT_DATABASE_URL → `nxflo/report/database-url` |
-| ALB | `nxflo-report-alb` → Target Group `nxflo-report-tg/b92ed25d2dad833f` |
+| ALB | `nxflo-report-alb` → Target Group `nxflo-report-tg/<TG_ID>` |
 
 ---
 
@@ -199,14 +199,14 @@ All services are Fargate, in private subnets, behind ALBs.
 
 | ALB Name | DNS | VPC | Security Group | Subnets |
 |----------|-----|-----|----------------|---------|
-| nxflo-buyer-alb | nxflo-buyer-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_ID> | public-a, public-b |
-| nxflo-dsp-alb | nxflo-dsp-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_ID> | public-a, public-b |
-| nxflo-pbs-alb | nxflo-pbs-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_ID> | public-a, public-b |
-| nxflo-axe-alb | nxflo-axe-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_ID> | public-a, public-b |
-| nxflo-creative-alb | nxflo-creative-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_ID> | public-a, public-b |
-| nxflo-signals-alb | nxflo-signals-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_ID> | public-a, public-b |
-| nxflo-report-alb | nxflo-report-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_ID> | public-a, public-b |
-| axp-prizm-alb | axp-prizm-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_ID> | (legacy VPC) |
+| nxflo-buyer-alb | nxflo-buyer-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_BUYER_ALB> | public-a, public-b |
+| nxflo-dsp-alb | nxflo-dsp-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_DSP_ALB> | public-a, public-b |
+| nxflo-pbs-alb | nxflo-pbs-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_PBS_ALB> | public-a, public-b |
+| nxflo-axe-alb | nxflo-axe-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_AXE_ALB> | public-a, public-b |
+| nxflo-creative-alb | nxflo-creative-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_CREATIVE_ALB> | public-a, public-b |
+| nxflo-signals-alb | nxflo-signals-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_SIGNALS_ALB> | public-a, public-b |
+| nxflo-report-alb | nxflo-report-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <VPC_ID> | <SG_REPORT_ALB> | public-a, public-b |
+| axp-prizm-alb | axp-prizm-alb-<ALB_ID>.us-east-1.elb.amazonaws.com | <LEGACY_VPC_ID> | <SG_LEGACY_ALB> | (legacy VPC) |
 
 **Note:** Each ALB has HTTPS (443) listener with ACM cert + HTTP (80) redirect. Target groups route to ECS tasks on their respective ports.
 
@@ -231,15 +231,15 @@ All services are Fargate, in private subnets, behind ALBs.
 
 | Secret | ARN |
 |--------|-----|
-| nxflo/buyer/database-url | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/buyer/database-url-zcq0sz |
-| nxflo/buyer/aurora-password | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/buyer/aurora-password-uxJhDL |
-| nxflo/buyer/webhook-secret | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/buyer/webhook-secret-6WUemU |
-| nxflo/dsp/database-url | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/dsp/database-url-7I6uqD |
-| nxflo/dsp/win-secret | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/dsp/win-secret-46Gijm |
-| nxflo/axe/database-url | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/axe/database-url-pu5I3V |
-| nxflo/signals/database-url | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/signals/database-url-tZJ0z6 |
-| nxflo/creative/database-url | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/creative/database-url-zJ1ruJ |
-| nxflo/report/database-url | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/report/database-url-N2fO24 |
+| nxflo/buyer/database-url | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/buyer/database-url-<SECRET_SUFFIX> |
+| nxflo/buyer/aurora-password | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/buyer/aurora-password-<SECRET_SUFFIX> |
+| nxflo/buyer/webhook-secret | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/buyer/webhook-secret-<SECRET_SUFFIX> |
+| nxflo/dsp/database-url | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/dsp/database-url-<SECRET_SUFFIX> |
+| nxflo/dsp/win-secret | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/dsp/win-secret-<SECRET_SUFFIX> |
+| nxflo/axe/database-url | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/axe/database-url-<SECRET_SUFFIX> |
+| nxflo/signals/database-url | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/signals/database-url-<SECRET_SUFFIX> |
+| nxflo/creative/database-url | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/creative/database-url-<SECRET_SUFFIX> |
+| nxflo/report/database-url | arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:nxflo/report/database-url-<SECRET_SUFFIX> |
 
 ---
 
@@ -322,23 +322,23 @@ All services are Fargate, in private subnets, behind ALBs.
 
 | SG ID | Name | Purpose |
 |-------|------|---------|
-| <SG_ID> | nxflo-db-sg | Aurora - accept from ECS tasks only |
-| <SG_ID> | nxflo-buyer-task | ECS Task: inbound from ALB |
-| <SG_ID> | nxflo-buyer-alb | ALB: inbound HTTP/HTTPS |
-| <SG_ID> | nxflo-dsp-task-sg | ECS tasks - ALB traffic only |
-| <SG_ID> | nxflo-dsp-alb-sg | ALB ingress (HTTPS/HTTP redirect) |
-| <SG_ID> | nxflo-pbs-task-sg | PBS ECS task |
-| <SG_ID> | nxflo-pbs-alb-sg | PBS ALB |
-| <SG_ID> | nxflo-axe-task | AXE ECS task |
-| <SG_ID> | nxflo-axe-alb | AXE ALB |
-| <SG_ID> | nxflo-creative-task | Creative ECS task |
-| <SG_ID> | nxflo-creative-alb | Creative ALB |
-| <SG_ID> | nxflo-signals-task | Signals ECS task |
-| <SG_ID> | nxflo-signals-alb | Signals ALB |
-| <SG_ID> | nxflo-report-task | Report ECS task |
-| <SG_ID> | nxflo-report-alb | Report ALB |
-| <SG_ID> | nxflo-buyer-vpce | VPC Endpoints |
-| <SG_ID> | nxflo-buyer-aurora | Aurora from ECS |
+| <SG_DB> | nxflo-db-sg | Aurora - accept from ECS tasks only |
+| <SG_BUYER_TASK> | nxflo-buyer-task | ECS Task: inbound from ALB |
+| <SG_BUYER_ALB> | nxflo-buyer-alb | ALB: inbound HTTP/HTTPS |
+| <SG_DSP_TASK> | nxflo-dsp-task-sg | ECS tasks - ALB traffic only |
+| <SG_DSP_ALB> | nxflo-dsp-alb-sg | ALB ingress (HTTPS/HTTP redirect) |
+| <SG_PBS_TASK> | nxflo-pbs-task-sg | PBS ECS task |
+| <SG_PBS_ALB> | nxflo-pbs-alb-sg | PBS ALB |
+| <SG_AXE_TASK> | nxflo-axe-task | AXE ECS task |
+| <SG_AXE_ALB> | nxflo-axe-alb | AXE ALB |
+| <SG_CREATIVE_TASK> | nxflo-creative-task | Creative ECS task |
+| <SG_CREATIVE_ALB> | nxflo-creative-alb | Creative ALB |
+| <SG_SIGNALS_TASK> | nxflo-signals-task | Signals ECS task |
+| <SG_SIGNALS_ALB> | nxflo-signals-alb | Signals ALB |
+| <SG_REPORT_TASK> | nxflo-report-task | Report ECS task |
+| <SG_REPORT_ALB> | nxflo-report-alb | Report ALB |
+| <SG_BUYER_VPCE> | nxflo-buyer-vpce | VPC Endpoints |
+| <SG_BUYER_AURORA> | nxflo-buyer-aurora | Aurora from ECS |
 
 ---
 
@@ -369,7 +369,7 @@ Multiple _acm-validations records — do not delete.
 
 | Resource | Monthly Cost | Action |
 |----------|-------------|--------|
-| NAT Gateway <NAT_ID> | ~$45 | Delete + release EIP |
+| NAT Gateway <NAT_GATEWAY_ID> | ~$45 | Delete + release EIP |
 | 7x nxflo ALBs + axp-prizm-alb | ~$130 | Delete ALBs + target groups |
 | Aurora cluster nxflo-db | ~$120 | Snapshot + stop |
 | RDS Proxies (2x) | ~$30 | Delete |

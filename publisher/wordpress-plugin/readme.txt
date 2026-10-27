@@ -55,7 +55,7 @@ Yes, you need a free Site ID from [nexflo.ai](https://nexflo.ai/publishers/signu
 
 = Will this slow down my site? =
 
-No. We use server-side header bidding, which means the auction happens on our servers, not in your visitor's browser. This is significantly faster than traditional client-side header bidding.
+The auction runs on the bidding server rather than in your visitor's browser, so the page loads one lightweight script instead of a client-side header-bidding wrapper.
 
 = Can I use this with Google AdSense? =
 
@@ -67,11 +67,7 @@ All standard IAB sizes including 728x90 (leaderboard), 300x250 (rectangle), 320x
 
 = How much can I earn? =
 
-Revenue depends on your traffic, niche, and geography. Most publishers see a 20-50% increase over AdSense alone.
-
-= Is my data safe? =
-
-Yes. We are GDPR compliant and never sell your personal data. See our [privacy policy](https://nexflo.ai/privacy).
+Revenue depends on your traffic, niche, and geography.
 
 == Screenshots ==
 
